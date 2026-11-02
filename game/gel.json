@@ -1,0 +1,17 @@
+{
+    "header": {
+        "title": "Lady Game",
+        "rom_size_kb": 128,
+        "sram_kb": 0,
+        "region": 1,
+        "developer": 0,
+        "version": 0
+    },
+    "sfx_echo": {
+        "enabled": false,
+        "delay": 3,
+        "feedback": 40,
+        "volume": 50,
+        "channels": [8]
+    }
+}

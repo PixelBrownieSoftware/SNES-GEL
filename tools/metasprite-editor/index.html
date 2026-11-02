@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GEL Metasprite Editor</title>
+  <link rel="stylesheet" href="editor.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">GEL TOOL</p>
+      <h1>Metasprite Editor</h1>
+    </div>
+    <div class="top-actions">
+      <button id="choose-project-folder" class="button secondary" title="Pick your game's assets folder">Open assets folder</button>
+      <span id="project-folder-name" class="folder-status">No folder selected</span>
+      <button id="reload-art" class="button secondary" title="Re-read the layer PNGs from the folder">Reload art</button>
+      <button id="load-project" class="button secondary">Load project</button>
+      <input id="project-file" type="file" accept=".json,application/json" hidden>
+      <button id="save-project" class="button primary" disabled>Save project</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="panel source-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">01 / LAYERS</p>
+          <h2>Body parts</h2>
+        </div>
+        <button id="add-layer" class="button secondary">+ Layer PNG</button>
+        <input id="layer-files" type="file" accept="image/png" multiple hidden>
+      </div>
+      <label class="field">Asset name
+        <input id="asset-name" value="player" maxlength="24" autocomplete="off">
+      </label>
+      <p class="hint">Back to front: the last layer draws in front. Layers that share a palette slot are merged into fewer sprites when they overlap.</p>
+      <div id="layers-list" class="layers-list"></div>
+      <div class="cell-row">
+        <span class="toolbar-label">Cell</span>
+        <input id="cell-w" type="number" min="1" max="16" value="3" aria-label="Cell width in tiles">
+        ×
+        <input id="cell-h" type="number" min="1" max="16" value="6" aria-label="Cell height in tiles">
+        <span class="toolbar-label">tiles</span>
+        <button id="fill-cell" class="button secondary" disabled title="Place every non-empty tile of the selected sheet area">Fill from selection</button>
+        <button id="pack-toggle" class="button quiet" title="Show only the non-empty tiles of this sheet, with identical tiles listed once">Packed view</button>
+      </div>
+      <p id="source-hint" class="hint">Click a sheet tile to select it, drag for an area, or double-click to select a whole cell.</p>
+      <div id="sheet-wrap" class="canvas-wrap sheet-wrap">
+        <canvas id="sheet-canvas" aria-label="Sprite sheet tile picker"></canvas>
+      </div>
+    </aside>
+
+    <section class="panel editor-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">02 / COMPOSITION</p>
+          <h2 id="sprite-title">Untitled metasprite</h2>
+        </div>
+        <div class="toolbar">
+          <button id="select-tool" class="button secondary active" aria-pressed="true">Select</button>
+          <button id="move-tool" class="button secondary" aria-pressed="false">Move</button>
+          <button id="stamp-tool" class="button secondary" disabled aria-pressed="false">Stamp</button>
+          <button id="eraser-tool" class="button secondary" aria-pressed="false" title="Click or drag to erase tiles on the current layer (E)">Eraser</button>
+          <button id="anchor-tool" class="button secondary" aria-pressed="false">Anchors</button>
+        </div>
+      </div>
+      <div id="stage-wrap" class="canvas-wrap stage-wrap">
+        <canvas id="stage-canvas" aria-label="Metasprite composition canvas"></canvas>
+        <div id="empty-state" class="empty-state">Add a layer PNG, pick tiles on the sheet and stamp them here.</div>
+      </div>
+      <div class="stage-toolbar">
+        <button id="undo-button" class="button secondary" disabled title="Undo (Ctrl+Z)">Undo</button>
+        <button id="flip-h" class="button secondary" disabled title="Mirror the selection (H)">Flip H</button>
+        <button id="flip-v" class="button secondary" disabled title="Flip the selection vertically (V)">Flip V</button>
+        <button id="erase-selection" class="button quiet" disabled title="Delete">Erase</button>
+        <button id="copy-layer-all" class="button quiet" title="Copy this layer's tiles to every frame (for parts that never move)">Layer → all frames</button>
+        <span class="toolbar-separator"></span>
+        <label class="check-label"><input id="show-onion" type="checkbox" checked> Onion skin</label>
+        <label class="check-label"><input id="show-collision" type="checkbox" checked> Hitbox</label>
+        <label class="check-label"><input id="show-grid" type="checkbox" checked> Grid</label>
+        <label class="check-label"><input id="show-anchor" type="checkbox" checked> Anchors</label>
+        <span class="toolbar-spacer"></span>
+        <button id="zoom-out" class="button secondary zoom-button" title="Zoom out">−</button>
+        <code id="zoom-level">4×</code>
+        <button id="zoom-in" class="button secondary zoom-button" title="Zoom in">+</button>
+      </div>
+      <div class="stage-footer">
+        <span id="selection-info">Nothing selected</span>
+        <label class="stage-size-label">Canvas
+          <input id="stage-columns" type="number" min="1" max="64" value="3" aria-label="Canvas width in tiles">
+          ×
+          <input id="stage-rows" type="number" min="1" max="64" value="6" aria-label="Canvas height in tiles">
+          tiles
+        </label>
+        <label class="stage-size-label">Hitbox
+          <input id="collision-width" type="number" min="1" max="128" value="18" aria-label="Collision box width in pixels">
+          ×
+          <input id="collision-height" type="number" min="1" max="128" value="46" aria-label="Collision box height in pixels">
+          px
+        </label>
+        <span class="anchor-readout">Sprite / hitbox: <code id="anchor-position">0, 0</code></span>
+        <button id="frame-anchor-reset" class="button quiet" title="Make this frame use the project sprite anchor again">Reset frame anchor</button>
+      </div>
+
+      <div class="frames-bar">
+        <div class="frames-head">
+          <h3>Frames</h3>
+          <input id="frame-name" class="frame-name" aria-label="Frame name" autocomplete="off">
+          <span class="toolbar-spacer"></span>
+          <button id="frame-add" class="button secondary" title="Add a blank frame">+ Blank</button>
+          <button id="frame-dup" class="button secondary" title="Duplicate the current frame">Duplicate</button>
+          <button id="frame-left" class="button quiet" title="Move earlier">◀</button>
+          <button id="frame-right" class="button quiet" title="Move later">▶</button>
+          <button id="frame-del" class="button quiet">Delete</button>
+        </div>
+        <div id="frame-strip" class="frame-strip"></div>
+      </div>
+    </section>
+
+    <aside class="panel details-panel">
+      <div class="panel-heading">
+        <div>
+          <p class="eyebrow">03 / ANIMATION</p>
+          <h2>Clips</h2>
+        </div>
+        <button id="clip-add" class="button secondary">+ Clip</button>
+      </div>
+      <div class="clip-head">
+        <select id="clip-select" aria-label="Animation clip"></select>
+        <input id="clip-name" aria-label="Clip name" autocomplete="off">
+        <label class="check-label"><input id="clip-loop" type="checkbox" checked> Loop</label>
+        <label class="check-label" title="Play forwards then backwards (needs 3+ steps)"><input id="clip-pingpong" type="checkbox"> Ping-pong</label>
+        <button id="clip-del" class="button quiet">Delete</button>
+      </div>
+      <div id="clip-steps" class="clip-steps"></div>
+      <div class="clip-actions">
+        <button id="step-add" class="button secondary">+ Step</button>
+        <button id="clip-fill" class="button quiet" title="One step per frame, 8 ticks each">All frames</button>
+        <button id="clip-play" class="button secondary">▶ Play</button>
+        <label class="check-label"><input id="play-mirror" type="checkbox"> Mirror</label>
+        <span class="toolbar-label">tick = 1/60 s</span>
+      </div>
+      <div class="preview-card anim-card">
+        <div class="preview-label"><span id="anim-label">Preview</span><code id="anim-step">—</code></div>
+        <canvas id="anim-canvas" aria-label="Animation preview"></canvas>
+      </div>
+      <div class="preview-row">
+        <div class="preview-card">
+          <div class="preview-label"><span>Normal</span></div>
+          <canvas id="normal-canvas" aria-label="Normal metasprite preview"></canvas>
+        </div>
+        <div class="preview-card">
+          <div class="preview-label"><span>Mirrored</span></div>
+          <canvas id="mirror-canvas" aria-label="Mirrored metasprite preview"></canvas>
+        </div>
+      </div>
+
+      <section class="export-summary">
+        <h3>Optimisation report</h3>
+        <dl id="report"></dl>
+        <ul id="warnings" class="warnings"></ul>
+      </section>
+      <section class="export-summary">
+        <h3>Offsets (GEL defines)</h3>
+        <dl>
+          <dt>Normal X</dt><dd id="offset-left">—</dd>
+          <dt>Mirrored X</dt><dd id="offset-right">—</dd>
+          <dt>Top Y</dt><dd id="offset-top">—</dd>
+          <dt>Box</dt><dd id="bounds-size">—</dd>
+        </dl>
+      </section>
+      <div class="notes">
+        <b>Using it in GEL</b>
+        <pre id="usage" class="usage"></pre>
+      </div>
+    </aside>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="metasprite-pack.js"></script>
+  <script src="editor.js"></script>
+</body>
+</html>

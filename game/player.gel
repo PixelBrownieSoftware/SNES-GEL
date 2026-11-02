@@ -1,0 +1,332 @@
+// ---------------- Player controller ----------------
+// Included by game.gel. Each ability is its own small function, switched on by a bit in
+// player_abilities, so a "character" is just a different set of flags.
+
+#define ABIL_MULTIJUMP  1
+#define ABIL_DASH       2
+#define ABIL_GLIDE      4
+#define ABIL_POUND      8
+#define ABIL_CLIMB      16
+
+#define MULTIJUMP_EXTRA 2
+#define MULTIJUMP_SPEED 4.4
+#define GLIDE_FALL_SPEED 0.8
+#define POUND_SPEED     7.0
+#define CLIMB_SPEED     1.0
+#define WALL_JUMP_LOCK  12
+
+enum Character {
+    CHAR_JUMPER,
+    CHAR_DASHER,
+    CHAR_GLIDER,
+    CHAR_POUNDER,
+    CHAR_CLIMBER
+};
+
+#define player_char       Entities[0].charid
+#define player_abilities  Entities[0].abil
+// Air actions (extra jumps / dash) used since last touching the ground.
+#define air_actions       Entities[0].air
+// Frames during which the wall can't be re-grabbed after a wall jump.
+#define wall_lock         Entities[0].wall
+
+fn set_character(u8 c) {
+    player_char = c;
+    switch (c) {
+        case CHAR_JUMPER:  player_abilities = ABIL_MULTIJUMP; break;
+        case CHAR_DASHER:  player_abilities = ABIL_DASH;      break;
+        case CHAR_GLIDER:  player_abilities = ABIL_GLIDE;     break;
+        case CHAR_POUNDER: player_abilities = ABIL_POUND;     break;
+        case CHAR_CLIMBER: player_abilities = ABIL_CLIMB;     break;
+    }
+}
+
+// ---- Horizontal movement ----
+fn update_dash() {
+    if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
+        player_vx = -DASH_SPEED;
+    } else {
+        player_vx = DASH_SPEED;
+    }
+    player_vy = 0.0;
+    dash_frames--;
+    if (dash_frames == 0) {
+        // Exit with some leftover speed that bleeds off, instead of a hard stop.
+        if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
+            player_vx = -DASH_EXIT_SPEED;
+        } else {
+            player_vx = DASH_EXIT_SPEED;
+        }
+    }
+}
+
+fn update_run() {
+    if (bit_test(mode_flags, MODE_FLAG_POUNDING)) {
+        player_vx = 0.0;
+        return 0;
+    }
+    if (pad1_held & BTN_LEFT) {
+        player_vx -= PLAYER_ACCEL;
+        if (player_vx < -PLAYER_MAX_SPEED) {
+            // Over top speed (just after a dash): bleed off rather than snap.
+            player_vx += FRICTION;
+            if (player_vx > -PLAYER_MAX_SPEED) {
+                player_vx = -PLAYER_MAX_SPEED;
+            }
+        }
+        bit_set(mode_flags, MODE_FLAG_DIRECTION);
+    } else if (pad1_held & BTN_RIGHT) {
+        player_vx += PLAYER_ACCEL;
+        if (player_vx > PLAYER_MAX_SPEED) {
+            player_vx -= FRICTION;
+            if (player_vx < PLAYER_MAX_SPEED) {
+                player_vx = PLAYER_MAX_SPEED;
+            }
+        }
+        bit_clear(mode_flags, MODE_FLAG_DIRECTION);
+    } else {
+        if (player_vx > FRICTION) {
+            player_vx -= FRICTION;
+        } else if (player_vx < -FRICTION) {
+            player_vx += FRICTION;
+        } else {
+            player_vx = 0.0;
+        }
+    }
+    if (player_vx == 0.0) {
+        player_state = STATE_IDLE;
+    } else {
+        player_state = STATE_MOVING;
+    }
+}
+
+fn play_jump_sound() {
+    std_sfx_play(player_jump_sfx, 15, 8, 6);
+}
+
+fn update_footstep_sound() {
+    if (game_mode != MODE_PLATFORMER ||
+        !bit_test(mode_flags, MODE_FLAG_ON_GROUND) ||
+        player_state != STATE_MOVING ||
+        player_vx == 0.0) {
+        footstep_timer = 0;
+        return 0;
+    }
+
+    footstep_timer++;
+    if (footstep_timer >= 18) {
+        footstep_timer = 0;
+        switch (footstep_index) {
+            case 0: std_sfx_play(player_footstep_sfx1, 15, 8, 8); break;
+            case 1: std_sfx_play(player_footstep_sfx2, 15, 8, 8); break;
+            case 2: std_sfx_play(player_footstep_sfx3, 15, 8, 8); break;
+            case 3: std_sfx_play(player_footstep_sfx4, 15, 8, 8); break;
+            case 4: std_sfx_play(player_footstep_sfx5, 15, 8, 8); break;
+        }
+        footstep_index++;
+        if (footstep_index >= 5) {
+            footstep_index = 0;
+        }
+    }
+}
+
+// ---- Abilities ----
+fn start_dash() {
+    player_vy = 0.0;
+    std_sfx_play(player_dash_sfx, 15, 8, 4);
+    if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
+        player_vx = -DASH_SPEED;
+    } else {
+        player_vx = DASH_SPEED;
+    }
+    dash_frames = DASH_DURATION;
+    player_state = STATE_DASHING;
+}
+
+// B pressed while airborne.
+fn air_action() {
+    if (player_abilities & ABIL_MULTIJUMP) {
+        if (air_actions < MULTIJUMP_EXTRA) {
+            player_vy = -MULTIJUMP_SPEED;
+            air_actions++;
+            play_jump_sound();
+        }
+    }
+    if (player_abilities & ABIL_DASH) {
+        if (air_actions < 1) {
+            start_dash();
+            air_actions++;
+        }
+    }
+}
+
+// Holding B while falling slows the descent.
+fn apply_glide() {
+    if (player_abilities & ABIL_GLIDE) {
+        if (pad1_held & BTN_B) {
+            if (player_vy > GLIDE_FALL_SPEED) {
+                player_vy = GLIDE_FALL_SPEED;
+            }
+        }
+    }
+}
+
+fn try_ground_pound() {
+    if (player_abilities & ABIL_POUND) {
+        if (pad1_pressed & BTN_DOWN) {
+            bit_set(mode_flags, MODE_FLAG_POUNDING);
+            player_vx = 0.0;
+            player_vy = POUND_SPEED;
+        }
+    }
+}
+
+// Grab the wall you are pushing into. Returns 1 while attached.
+fn update_climb() {
+    bit_clear(mode_flags, MODE_FLAG_CLIMBING);
+    if (wall_lock > 0) {
+        wall_lock--;
+        return 0;
+    }
+    if (!(player_abilities & ABIL_CLIMB)) { return 0; }
+    u8 touching = 0;
+    if (pad1_held & BTN_RIGHT) {
+        if (hit_right(PLAYER_ENT)) { touching = 1; }
+    }
+    if (pad1_held & BTN_LEFT) {
+        if (hit_left(PLAYER_ENT)) { touching = 1; }
+    }
+    if (touching == 0) { return 0; }
+
+    bit_set(mode_flags, MODE_FLAG_CLIMBING);
+    player_vy = 0.0;
+    if (pad1_held & BTN_UP) {
+        player_vy = -CLIMB_SPEED;
+    } else if (pad1_held & BTN_DOWN) {
+        player_vy = CLIMB_SPEED;
+    }
+    if (pad1_pressed & BTN_B) {
+        // Kick away from the wall.
+        player_vy = -JUMP_SPEED;
+        play_jump_sound();
+        wall_lock = WALL_JUMP_LOCK;
+        bit_clear(mode_flags, MODE_FLAG_CLIMBING);
+        if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
+            player_vx = PLAYER_MAX_SPEED;
+            bit_clear(mode_flags, MODE_FLAG_DIRECTION);
+        } else {
+            player_vx = -PLAYER_MAX_SPEED;
+            bit_set(mode_flags, MODE_FLAG_DIRECTION);
+        }
+    }
+    return 1;
+}
+
+// ---- Vertical movement ----
+fn update_platformer() {
+    if (hit_down(PLAYER_ENT)) {
+        if (!bit_test(mode_flags, MODE_FLAG_ON_GROUND)) {
+            std_sfx_play(player_land_sfx, 15, 8, 5);
+            footstep_timer = 0;
+        }
+        bit_set(mode_flags, MODE_FLAG_ON_GROUND);
+        bit_clear(mode_flags, MODE_FLAG_POUNDING);
+        air_actions = 0;
+    } else {
+        bit_clear(mode_flags, MODE_FLAG_ON_GROUND);
+    }
+
+    if (pad1_pressed & BTN_X) {
+        player_char++;
+        if (player_char > CHAR_CLIMBER) {
+            player_char = CHAR_JUMPER;
+        }
+        set_character(player_char);
+    }
+
+    if (!bit_test(mode_flags, MODE_FLAG_ON_GROUND)) {
+        if (update_climb()) {
+            return 0;
+        }
+    }
+
+    if (player_state != STATE_DASHING || dash_frames == 0) {
+        player_vy += GRAVITY * player_air_res;
+    }
+    if (!bit_test(mode_flags, MODE_FLAG_POUNDING)) {
+        if (player_vy > MAX_FALL) {
+            player_vy = MAX_FALL;
+        }
+    }
+
+    if (pad1_pressed & BTN_B) {
+        if (bit_test(mode_flags, MODE_FLAG_ON_GROUND)) {
+            player_vy = -JUMP_SPEED;
+            play_jump_sound();
+        } else {
+            air_action();
+        }
+    }
+    if (!bit_test(mode_flags, MODE_FLAG_ON_GROUND)) {
+        try_ground_pound();
+        apply_glide();
+    }
+
+    if (player_vy >= 0.0) {
+        bouncing = 0;
+    }
+    // Releasing jump early gives a short hop.
+    if (player_vy < -JUMP_CUT_SPEED) {
+        if (!(pad1_held & BTN_B)) {
+            if (!bouncing) {
+                player_vy = -JUMP_CUT_SPEED;
+            }
+        }
+    }
+}
+
+fn update_topdown() {
+    if (pad1_held & BTN_UP) {
+        player_vy -= PLAYER_ACCEL;
+        if (player_vy < -PLAYER_MAX_SPEED) {
+            player_vy = -PLAYER_MAX_SPEED;
+        }
+    } else if (pad1_held & BTN_DOWN) {
+        player_vy += PLAYER_ACCEL;
+        if (player_vy > PLAYER_MAX_SPEED) {
+            player_vy = PLAYER_MAX_SPEED;
+        }
+    } else {
+        if (player_vy > FRICTION) {
+            player_vy -= FRICTION;
+        } else if (player_vy < -FRICTION) {
+            player_vy += FRICTION;
+        } else {
+            player_vy = 0.0;
+        }
+    }
+}
+
+fn update_player() {
+    if (pad1_pressed & BTN_SELECT) {
+        game_mode ^= 1;
+        player_vx = 0.0;
+        player_vy = 0.0;
+    }
+
+    if (player_state == STATE_DASHING && dash_frames > 0) {
+        update_dash();
+    } else {
+        update_run();
+    }
+
+    if (game_mode == MODE_PLATFORMER) {
+        update_platformer();
+    } else {
+        update_topdown();
+    }
+
+    move_x(PLAYER_ENT);
+    move_y(PLAYER_ENT);
+    update_footstep_sound();
+}

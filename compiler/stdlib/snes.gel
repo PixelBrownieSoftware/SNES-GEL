@@ -1,0 +1,518 @@
+// ==============================================================================
+// snes.gel - SNES Standard Hardware Library
+// ==============================================================================
+
+// --- PPU / System Registers ---
+mmio u8  INIDISP     @ 0x2100; // Screen Display (Brightness / Forced Blank)
+mmio u8  OBJSEL      @ 0x2101; // Object Size & Tile Base Address
+mmio u8  OAMADDL     @ 0x2102; // OAM Address Low
+mmio u8  OAMADDH     @ 0x2103; // OAM Address High
+mmio u8  OAMDATA     @ 0x2104; // OAM Data Write
+mmio u8  BGMODE      @ 0x2105; // BG Mode and Tile Size
+mmio u8  BG1SC       @ 0x2107; // BG1 Map Address & Size
+mmio u8  BG2SC       @ 0x2108; // BG2 Map Address & Size
+mmio u8  BG12NBA     @ 0x210B; // BG1/BG2 Tile Data Base
+mmio u8  BG1HOFS     @ 0x210D; // BG1 Horizontal Scroll (write twice: low, high)
+mmio u8  BG1VOFS     @ 0x210E; // BG1 Vertical Scroll   (write twice)
+mmio u8  BG2HOFS     @ 0x210F; // BG2 Horizontal Scroll (write twice)
+mmio u8  BG2VOFS     @ 0x2110; // BG2 Vertical Scroll   (write twice)
+mmio u8  VMAIN       @ 0x2115; // VRAM Increment Control
+mmio u16 VMADDL      @ 0x2116; // VRAM Word Address (16-bit)
+mmio u16 VMDATAL     @ 0x2118; // VRAM Data Write Port
+mmio u8  CGADD       @ 0x2121; // CGRAM Palette Address
+mmio u8  CGDATA      @ 0x2122; // CGRAM Data Write Port
+mmio u8  TM          @ 0x212C; // Main Screen Layer Designation
+mmio u8  NMITIMEN    @ 0x4200; // Enable VBlank / Joypad Auto-read
+mmio u8  MDMAEN      @ 0x420B; // DMA Enable Port
+mmio u16 JOY1L       @ 0x4218; // Joypad 1 Data
+mmio u8  HVBJOY      @ 0x4212; // PPU Status Flags
+
+// --- DMA Channel 1 Registers ---
+mmio u8  DMAMODE1    @ 0x4310;
+mmio u8  DMAPORT1    @ 0x4311;
+mmio u16 DMASRC1     @ 0x4312;
+mmio u8  DMABANK1    @ 0x4314;
+mmio u16 DMALEN1     @ 0x4315;
+
+// --- Joypad Button Constants ---
+#define BTN_B      0x8000
+#define BTN_Y      0x4000
+#define BTN_SELECT 0x2000
+#define BTN_START  0x1000
+#define BTN_UP     0x0800
+#define BTN_DOWN   0x0400
+#define BTN_LEFT   0x0200
+#define BTN_RIGHT  0x0100
+#define BTN_A      0x0080
+#define BTN_X      0x0040
+#define BTN_L      0x0020
+#define BTN_R      0x0010
+
+// --- OAM Attribute Byte (v h p p p c layout: vhoo ppp c) ---
+// Masks: combine with | and assign, e.g.  attr = OAM_PAL2 | OAM_PRIO3 | OAM_HFLIP;
+enum OamAttr {
+    OAM_TABLE2 = 0x01, // Use second tile name table
+    OAM_PAL0   = 0x00, // Sprite palettes 0-7 (CGRAM 128 + n*16)
+    OAM_PAL1   = 0x02,
+    OAM_PAL2   = 0x04,
+    OAM_PAL3   = 0x06,
+    OAM_PAL4   = 0x08,
+    OAM_PAL5   = 0x0A,
+    OAM_PAL6   = 0x0C,
+    OAM_PAL7   = 0x0E,
+    OAM_PRIO0  = 0x00, // Priority: 0 = behind all BG layers ... 3 = in front of all
+    OAM_PRIO1  = 0x10,
+    OAM_PRIO2  = 0x20,
+    OAM_PRIO3  = 0x30,
+    OAM_HFLIP  = 0x40,
+    OAM_VFLIP  = 0x80
+};
+
+// Bit indices for bit_set / bit_clear / bit_test, e.g.  bit_set(attr, OAMB_HFLIP);
+enum OamBit {
+    OAMB_TABLE2 = 0,
+    OAMB_PAL    = 1,   // lowest of the 3 palette bits (1-3)
+    OAMB_PRIO   = 4,   // lowest of the 2 priority bits (4-5)
+    OAMB_HFLIP  = 6,
+    OAMB_VFLIP  = 7
+};
+
+// --- OAM Shadow Buffer ---
+// Hardware OAM is 128 sprites x 4 bytes (x, y, tile, flags), so the table is
+// 'interleaved'. The 32-byte high table ($0400-$041F) follows it and is left at 0
+// (X bit 8 = 0, small size) because WRAM is cleared at boot.
+struct_table ShadowOAM[128] @ 0x0200 interleaved {
+    u8 x;
+    u8 y;
+    u8 tile;
+    u8 flags;
+}
+
+dp u16 pad1_held;
+dp u16 pad1_pressed;
+dp u16 pad1_prev;
+dp u8  oam_cursor = 0;
+dp u8  nmi_ticks = 0;  // incremented by the NMI handler once per frame (needs NMITIMEN bit 7)
+dp u8  ticks_seen = 0; // frames already consumed by the game loop
+
+// Blocks until the next NMI and returns how many frames elapsed since the last call
+// (clamped to max_steps so a long stall cannot snowball into a spiral of catch-up updates).
+static fn std_frames_elapsed(u8 max_steps) {
+    while (nmi_ticks == ticks_seen) { }
+    u8 now = nmi_ticks; // snapshot: an NMI may land between the reads below
+    u8 steps = now - ticks_seen;
+    ticks_seen = now;
+    if (steps > max_steps) { steps = max_steps; }
+    return steps;
+}
+
+static fn std_snes_init() {
+    asm {
+        SEI             ; Disable IRQs
+        CLC
+        XCE             ; Switch to Native mode
+        SEP #$20        ; 8-bit Accumulator
+        REP #$10        ; 16-bit X/Y Registers
+        
+        LDA #$80
+        STA $2100       ; Force Blanking ON
+        STZ $4200       ; Disable NMI / Timers
+    }
+}
+
+static fn std_wait_vblank() {
+    asm {
+        SEP #$20
+    -   LDA $4212       ; Wait for any current VBlank to end...
+        AND #$80
+        BNE -
+    -   LDA $4212       ; ...then for the next one to begin
+        AND #$80
+        BEQ -
+    }
+}
+
+static fn std_input_update() {
+    // Auto-joypad read runs for ~3 lines after VBlank starts; reading earlier gives junk.
+    while (HVBJOY & 1) { }
+    u16 current = JOY1L;
+    pad1_held    = current;
+    pad1_pressed = current & ~pad1_prev;
+    pad1_prev    = current;
+}
+
+static fn std_oam_clear() {
+    oam_cursor = 0;
+    oam_prev = 0;
+    ShadowOAM.for_each(i) {
+        ShadowOAM[i].y = 224; // Push all 128 sprites off-screen
+    }
+}
+
+// Call at the start of a frame's drawing (no clearing needed).
+static fn std_oam_begin() {
+    oam_cursor = 0;
+}
+
+// Call after drawing: hides only the slots that were visible last frame but are unused now.
+static fn std_oam_end() {
+    u8 i = oam_cursor;
+    while (i < oam_prev) {
+        ShadowOAM[i].y = 224;
+        i += 1;
+    }
+    oam_prev = oam_cursor;
+}
+
+static fn std_draw_sprite(u8 screen_x, u8 screen_y, u8 tile_id, u8 flags) {
+    u8 slot = oam_cursor;
+    if (slot < 128) {
+        ShadowOAM[slot].x     = screen_x;
+        ShadowOAM[slot].y     = screen_y;
+        ShadowOAM[slot].tile  = tile_id;
+        ShadowOAM[slot].flags = flags;
+        oam_cursor = slot + 1;
+    }
+}
+
+// Draws tile_count consecutive 8x8 tiles (starting at tile 0), tiles_wide per row.
+// Setting the H-flip bit (0x40) in base_attr also mirrors the column order.
+static fn std_draw_metasprite(u8 base_x, u8 base_y, u8 tiles_wide, u8 tile_count, u8 base_attr) {
+    u8 i = 0;
+    u8 col = 0;
+    u8 cx = 0;
+    u8 y = base_y;
+    while (i < tile_count) {
+        cx = col;
+        if (bit_test(base_attr, OAMB_HFLIP)) {
+            cx = tiles_wide - 1 - col;
+        }
+        std_draw_sprite(base_x + (cx * 8), y, i, base_attr);
+        i++;
+        col++;
+        if (col == tiles_wide) {
+            col = 0;
+            y = y + 8;
+        }
+    }
+}
+
+// Draws one frame of a packed layered metasprite (NAME_MS_FRAMES from the asset packer).
+// `attr` carries only priority and H/V flip bits (palettes come from the frame data);
+// H-flip mirrors the whole frame. `tile_base` is the first VRAM tile of NAME_MS_TILES.
+static fn std_draw_frame(u16 frames, u8 frame, u8 x, u8 y, u8 attr, u8 tile_base) {
+    u8 wt = peek8(frames);
+    u16 p = frames + 1 + frame + frame;
+    u16 lo = peek8(p);
+    p++;
+    u16 hi = peek8(p);
+    u16 fp = lo | (hi << 8);
+    u8 n = peek8(fp);
+    fp++;
+    u8 pos = 0;
+    u8 gx = 0;
+    u8 gy = 0;
+    u8 tile = 0;
+    u8 ea = 0;
+    while (n != 0) {
+        pos = peek8(fp);
+        fp++;
+        tile = peek8(fp);
+        fp++;
+        ea = peek8(fp);
+        fp++;
+        gx = pos & 15;
+        gy = pos >> 4;
+        if (bit_test(attr, OAMB_HFLIP)) {
+            gx = wt - 1 - gx;
+        }
+        gx = gx << 3;
+        gy = gy << 3;
+        tile = tile + tile_base;
+        ea = ea ^ attr;
+        std_draw_sprite(x + gx, y + gy, tile, ea);
+        n--;
+    }
+}
+
+// Animation clips (NAME_MS_ANIMS). The caller keeps `step` and a tick counter.
+static fn std_anim_clip(u16 anims, u8 clip) {
+    u16 p = anims + clip + clip;
+    u16 lo = peek8(p);
+    p++;
+    u16 hi = peek8(p);
+    return lo | (hi << 8);
+}
+
+// Frame number shown at `step`.
+static fn std_anim_frame(u16 anims, u8 clip, u8 step) {
+    u16 c = std_anim_clip(anims, clip);
+    c = c + 2 + step + step;
+    return peek8(c);
+}
+
+// Ticks to hold `step`.
+static fn std_anim_ticks(u16 anims, u8 clip, u8 step) {
+    u16 c = std_anim_clip(anims, clip);
+    c = c + 3 + step + step;
+    return peek8(c);
+}
+
+// Step that follows `step`: wraps if the clip loops, otherwise stays on the last step.
+static fn std_anim_next(u16 anims, u8 clip, u8 step) {
+    u16 c = std_anim_clip(anims, clip);
+    u8 count = peek8(c);
+    c++;
+    u8 loop = peek8(c);
+    u8 nxt = step + 1;
+    if (nxt >= count) {
+        if (loop != 0) {
+            nxt = 0;
+        } else {
+            nxt = count - 1;
+        }
+    }
+    return nxt;
+}
+
+static fn std_load_palette(u8 palette_idx, u16 palette_rom_addr, u16 color_count) {
+    CGADD    = palette_idx * 16;
+    DMAMODE1 = 0x00;
+    DMAPORT1 = 0x22;
+    DMASRC1  = palette_rom_addr;
+    DMABANK1 = 0x00;
+    DMALEN1  = color_count * 2;
+    MDMAEN   = 0x02;
+}
+
+static fn std_load_vram(u16 vram_word_addr, u16 rom_src_addr, u16 byte_length) {
+    VMAIN    = 0x80;
+    VMADDL   = vram_word_addr;
+    DMAMODE1 = 0x01;
+    DMAPORT1 = 0x18;
+    DMASRC1  = rom_src_addr;
+    DMABANK1 = 0x00;
+    DMALEN1  = byte_length;
+    MDMAEN   = 0x02;
+}
+
+// Same, but the source is in any ROM bank (e.g. level data in its own bank).
+static fn std_load_vram_far(u16 vram_word_addr, u8 bank, u16 rom_src_addr, u16 byte_length) {
+    VMAIN    = 0x80;
+    VMADDL   = vram_word_addr;
+    DMAMODE1 = 0x01;
+    DMAPORT1 = 0x18;
+    DMASRC1  = rom_src_addr;
+    DMABANK1 = bank;
+    DMALEN1  = byte_length;
+    MDMAEN   = 0x02;
+}
+
+// --- Text (BG1, 4bpp font) ---
+// Font tile N+1 holds glyph cell N (tile 0 is blank), so the zeroed map is empty.
+// Tilemap lives in WRAM and is DMA'd to VRAM word $0800 each std_text_flush().
+// Font tiles go to VRAM word $1000. Remember to enable BG1 (TM bit 0).
+struct_table TextMap[1024] @ 0x0800 {
+    u16 tile;
+}
+
+dp u16 text_val;
+dp u8  text_started;
+dp u8  text_dirty = 0;   // rows 0..text_dirty-1 of the map changed since the last flush
+dp u8  oam_prev = 0;     // sprite slots that were visible after the previous frame
+
+static fn std_text_init(u16 font_palette, u16 font_tiles, u16 font_bytes) {
+    std_load_palette(0, font_palette, 16);
+    std_load_vram(0x1000, font_tiles, font_bytes);
+    BGMODE   = 0x01;
+    BG1SC    = 0x08;   // map at word $0800, 32x32
+    BG12NBA  = 0x01;   // BG1 tiles at word $1000
+    text_dirty = 32;   // first flush uploads the whole (blank) map
+}
+
+// Uploads only the rows touched since the last flush (64 bytes per row).
+static fn std_text_flush() {
+    if (text_dirty != 0) {
+        u16 rows = text_dirty;
+        text_dirty = 0;
+        std_load_vram(0x0800, 0x0800, rows << 6);
+    }
+}
+
+static fn std_text_clear() {
+    TextMap.for_each(i) {
+        TextMap[i].tile = 0;
+    }
+    text_dirty = 32;
+}
+
+static fn std_put_char(u8 col, u8 row, u8 ch) {
+    u16 t = 0;
+    if (ch >= 65) {
+        if (ch <= 90)       { t = ch - 64; }          // A-Z
+        else if (ch >= 97)  { if (ch <= 122) { t = ch - 36; } }  // a-z
+    } else if (ch >= 49) {
+        if (ch <= 57)       { t = ch - 22; }          // 1-9
+        else if (ch == 58)  { t = 36; }               // :
+        else if (ch == 60)  { t = 41; }               // <
+        else if (ch == 61)  { t = 51; }               // =
+        else if (ch == 62)  { t = 40; }               // >
+        else if (ch == 63)  { t = 42; }               // ?
+    } else {
+        if (ch == 48)       { t = 39; }               // 0
+        else if (ch == 46)  { t = 38; }               // .
+        else if (ch == 44)  { t = 43; }               // ,
+        else if (ch == 33)  { t = 44; }               // !
+        else if (ch == 45)  { t = 45; }               // -
+        else if (ch == 40)  { t = 46; }               // (
+        else if (ch == 41)  { t = 47; }               // )
+        else if (ch == 43)  { t = 48; }               // +
+        else if (ch == 47)  { t = 54; }               // /
+        else if (ch == 37)  { t = 57; }               // %
+        else if (ch == 35)  { t = 53; }               // #
+    }
+    if (col < 32) {
+        if (row < 32) {
+            u16 idx = (row << 5) + col;
+            if (TextMap[idx].tile != t) {
+                TextMap[idx].tile = t;
+                if (text_dirty <= row) { text_dirty = row + 1; }
+            }
+        }
+    }
+}
+
+static fn std_print(u8 col, u8 row, u16 str) {
+    u8 c = peek8(str);
+    while (c != 0) {
+        std_put_char(col, row, c);
+        col++;
+        str++;
+        c = peek8(str);
+    }
+}
+
+static fn std_put_nibble(u8 col, u8 row, u8 n) {
+    if (n < 10) {
+        std_put_char(col, row, n + 48);
+    } else {
+        std_put_char(col, row, n + 55);
+    }
+}
+
+// Prints 4 hex digits.
+static fn std_print_hex(u8 col, u8 row, u16 v) {
+    std_put_nibble(col,     row, (v >> 12) & 15);
+    std_put_nibble(col + 1, row, (v >> 8) & 15);
+    std_put_nibble(col + 2, row, (v >> 4) & 15);
+    std_put_nibble(col + 3, row, v & 15);
+}
+
+static fn std_dec_step(u8 col, u8 row, u16 unit) {
+    u8 d = 0;
+    while (text_val >= unit) {
+        text_val -= unit;
+        d++;
+    }
+    if (d != 0) { text_started = 1; }
+    if (unit == 1) { text_started = 1; }
+    if (text_started != 0) {
+        std_put_nibble(col, row, d);
+    } else {
+        std_put_char(col, row, 32);
+    }
+}
+
+// Prints an unsigned decimal in a 5-character field (leading spaces).
+static fn std_print_dec(u8 col, u8 row, u16 v) {
+    text_val = v;
+    text_started = 0;
+    std_dec_step(col,     row, 10000);
+    std_dec_step(col + 1, row, 1000);
+    std_dec_step(col + 2, row, 100);
+    std_dec_step(col + 3, row, 10);
+    std_dec_step(col + 4, row, 1);
+}
+
+// --- Scrolling background (BG2) ---
+// VRAM (words): BG1 text map $0800, BG1 tiles $1000, BG2 tiles $3000, BG2 map $4000.
+static fn std_set_scroll(u16 x, u16 y) {
+    BG2HOFS = x;
+    BG2HOFS = x >> 8;
+    BG2VOFS = y;
+    BG2VOFS = y >> 8;
+}
+
+// Call after std_text_init (this sets BG12NBA for both layers). map_size: 0 = 32x32, 1 = 64x32.
+static fn std_level_init(u16 tile_palette, u16 tiles, u16 tile_bytes, u16 map, u16 map_bytes, u8 map_size) {
+    std_load_palette(1, tile_palette, 16);
+    std_load_vram(0x3000, tiles, tile_bytes);
+    std_load_vram(0x4000, map, map_bytes);
+    BG2SC   = 0x40 + map_size;
+    BG12NBA = 0x31;
+    BG1HOFS = 0;
+    BG1HOFS = 0;
+    BG1VOFS = 0;
+    BG1VOFS = 0;
+    std_set_scroll(0, 0);
+}
+
+// Like std_level_init, but the map is not uploaded: the game streams rows into the 32-row
+// VRAM ring at word $4000 (see level_stream in game.gel). Lets levels be any height.
+static fn std_level_setup(u16 tile_palette, u16 tiles, u16 tile_bytes, u8 map_size) {
+    std_load_palette(1, tile_palette, 16);
+    std_load_vram(0x3000, tiles, tile_bytes);
+    BG2SC   = 0x40 + map_size;
+    BG12NBA = 0x31;
+    BG1HOFS = 0;
+    BG1HOFS = 0;
+    BG1VOFS = 0;
+    BG1VOFS = 0;
+    std_set_scroll(0, 0);
+}
+
+// Returns the absolute value of a signed 16-bit integer
+static fn abs16(i16 val) {
+    if (val < 0) {
+        return 0 - val;
+    }
+    return val;
+}
+
+// Current scanline (0-261 NTSC). VBlank is lines 225-261, so callers can budget DMA time.
+static fn std_vcount() {
+    asm {
+        SEP #$20
+        LDA $2137       ; latch H/V counters
+        LDA $213F       ; reset the $213D low/high read toggle
+        LDA $213D       ; V low
+        XBA
+        LDA $213D       ; V bit 8
+        AND #$01
+        XBA             ; A = bit8:low
+    }
+}
+
+static fn std_oam_flush_dma() {
+    asm {
+        SEP #$20
+        STZ $2102
+        STZ $2103
+        LDA #$00
+        STA $4300       ; DMA mode 0: one register, A->B
+        LDA #$04
+        STA $4301       ; B bus = $2104 (OAMDATA)
+        LDA #$00
+        STA $4302
+        LDA #$02
+        STA $4303       ; Source $7E:0200
+        LDA #$7E
+        STA $4304
+        LDA #$20
+        STA $4305
+        LDA #$02
+        STA $4306       ; Length $0220 (512 byte table + 32 byte high table)
+        LDA #$01
+        STA $420B
+    }
+}

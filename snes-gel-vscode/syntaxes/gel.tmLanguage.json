@@ -1,0 +1,220 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "SNES-GEL",
+  "scopeName": "source.gel",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#directives" },
+    { "include": "#asm-block" },
+    { "include": "#strings" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#builtins" },
+    { "include": "#constants" },
+    { "include": "#numbers" },
+    { "include": "#table-members" },
+    { "include": "#functions" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.gel", "match": "//.*$" }
+      ]
+    },
+    "directives": {
+      "patterns": [
+        {
+          "match": "^\\s*(#include)\\s+([\"<][^\">]+[\">])",
+          "captures": {
+            "1": { "name": "keyword.control.directive.gel" },
+            "2": { "name": "string.quoted.other.lt-gt.include.gel" }
+          }
+        },
+        {
+          "match": "^\\s*(#define)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.control.directive.gel" },
+            "2": { "name": "entity.name.constant.macro.gel" }
+          }
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        { "name": "string.quoted.double.gel", "match": "\"[^\"\\n]*\"" },
+        { "name": "string.quoted.single.char.gel", "match": "'[^'\\n]'" }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.enum.gel" },
+            "2": { "name": "entity.name.type.enum.gel" }
+          }
+        },
+        {
+          "match": "\\b(struct_table|struct)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.type.struct.gel" },
+            "2": { "name": "entity.name.type.struct.gel" }
+          }
+        },
+        {
+          "match": "\\b(extern)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "storage.modifier.extern.gel" },
+            "2": { "name": "variable.other.extern.gel" }
+          }
+        },
+        {
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.function.gel" },
+            "2": { "name": "entity.name.function.gel" }
+          }
+        }
+      ]
+    },
+    "asm-block": {
+      "begin": "\\b(asm)\\s*(\\{)",
+      "end": "\\}",
+      "beginCaptures": {
+        "1": { "name": "keyword.other.asm.gel" },
+        "2": { "name": "punctuation.section.asm.begin.gel" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.section.asm.end.gel" }
+      },
+      "name": "meta.embedded.block.asm.gel",
+      "patterns": [
+        { "name": "comment.line.semicolon.asm.gel", "match": ";.*$" },
+        { "name": "constant.numeric.hex.asm.gel", "match": "\\$[0-9A-Fa-f]+" },
+        { "name": "constant.numeric.immediate.asm.gel", "match": "#\\$?[0-9A-Fa-f]+" },
+        {
+          "name": "keyword.control.assembly.snes",
+          "match": "(?i)\\b(ADC|AND|ASL|BCC|BCS|BEQ|BIT|BMI|BNE|BPL|BRA|BRL|BVC|BVS|CLC|CLD|CLI|CLV|CMP|CPX|CPY|DEC|DEX|DEY|EOR|INC|INX|INY|JMP|JML|JSR|JSL|LDA|LDX|LDY|LSR|MVN|MVP|NOP|ORA|PEA|PEI|PER|PHA|PHB|PHD|PHK|PHP|PHX|PHY|PLA|PLB|PLD|PLP|PLX|PLY|REP|ROL|ROR|RTI|RTL|RTS|SBC|SEC|SED|SEI|SEP|STA|STP|STX|STY|STZ|TAX|TAY|TCD|TCS|TDC|TRB|TSB|TSC|TSX|TXA|TXS|TXY|TYA|TYX|WAI|WDM|XBA|XCE)(\\.[bwl])?\\b"
+        },
+        { "name": "variable.other.asm.gel", "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.gel",
+          "match": "\\b(if|else|switch|case|default|break|return|while)\\b"
+        },
+        {
+          "name": "storage.modifier.gel",
+          "match": "\\b(dp|mmio|persist|static|interleaved)\\b"
+        },
+        {
+          "name": "keyword.other.gel",
+          "match": "\\b(for_each|create|free)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.gel",
+          "match": "\\b(u8|i8|u16|i16|f16|f32)\\b"
+        }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.gel",
+          "match": "\\b(bit|bit_set|bit_clear|bit_test|peek8)(?=\\s*\\()"
+        },
+        {
+          "name": "support.function.builtin.gel",
+          "match": "\\b(reg)(?=\\s*\\(\\s*[AXY]\\s*\\))"
+        },
+        {
+          "name": "support.function.stdlib.gel",
+          "match": "\\bstd_[a-z0-9_]+(?=\\s*\\()"
+        },
+        {
+          "name": "variable.language.input.gel",
+          "match": "\\b(pad1_held|pad1_pressed|pad1_prev)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.button.gel",
+          "match": "\\bBTN_[A-Z0-9_]+\\b"
+        },
+        {
+          "name": "constant.language.oam.gel",
+          "match": "\\bOAMB?_[A-Z0-9_]+\\b"
+        },
+        {
+          "name": "constant.other.enum.gel",
+          "match": "\\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.hex.gel", "match": "\\b0x[0-9a-fA-F]+\\b" },
+        { "name": "constant.numeric.float.gel", "match": "\\b[0-9]+\\.[0-9]+\\b" },
+        { "name": "constant.numeric.decimal.gel", "match": "\\b[0-9]+\\b" }
+      ]
+    },
+    "table-members": {
+      "patterns": [
+        {
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*\\[[^\\]]*\\]\\s*(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "variable.other.table.gel" },
+            "2": { "name": "punctuation.accessor.gel" },
+            "3": { "name": "variable.other.member.gel" }
+          }
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "name": "entity.name.function.call.gel",
+          "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.gel",
+          "match": "(<<=|>>=|\\+=|-=|\\*=|/=|&=|\\|=|\\^=|=(?!=))"
+        },
+        {
+          "name": "keyword.operator.increment.gel",
+          "match": "\\+\\+|--"
+        },
+        {
+          "name": "keyword.operator.logical.gel",
+          "match": "&&|\\|\\||!(?!=)"
+        },
+        {
+          "name": "keyword.operator.comparison.gel",
+          "match": "==|!=|<=|>=|<(?!<)|>(?!>)"
+        },
+        {
+          "name": "keyword.operator.bitwise.gel",
+          "match": "<<|>>|&|\\||\\^|~"
+        },
+        {
+          "name": "keyword.operator.arithmetic.gel",
+          "match": "[-+*/]"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,5 @@
+.env
+__debug_bin*
+.testdata-*
+*.AutoSave.*
+build

@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Install Python dependencies
+        run: pip install lark watchdog pillow pytest
+      - name: Build smconv
+        run: tools\setup_smconv.bat
+        shell: cmd
+      - name: Unit and build tests
+        run: python -m pytest tests -q
+      - name: Build the example game
+        run: python compiler/build.py game --release

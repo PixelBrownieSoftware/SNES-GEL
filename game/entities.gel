@@ -1,0 +1,208 @@
+// ---------------- Entities ----------------
+// Included by game.gel. One table holds every dynamic thing in the level. Entities are created
+// from the Tiled object layer (spawn_level_objects) and each has a type, a position and a
+// little state. What a type does is a branch in update_entities / draw_entities, so adding a
+// type means adding an OBJ_* object in Tiled and one case here, not a new system.
+//
+// The player is not in this table yet; it still lives in player.gel.
+
+#define ENT_SIZE        8       // pickup box, pixels
+// Pickups reuse the bullet tile (VRAM tile right after the player's tiles, PLAYER_MS_TILE_COUNT)
+// and OBJ palette 1 (attribute 0x32).
+
+struct_table Entities[16] {
+    u8  type;    // OBJ_* constant
+    u16 x;       // top-left, world pixels
+    u16 y;
+    u8  param;   // the Tiled "param" property
+    u8  anim;    // bouncer: squash frame 0-3, 0 = idle
+    f16 vx;      // velocity, pixels per step (the player mirrors player_vx / player_vy)
+    f16 vy;
+    i16 subx;    // sub-pixel remainders
+    i16 suby;
+    u8  state;     // player_state: STATE_*
+    u8  flags;     // mode flags, see PlayerModeFlags
+    u8  dash;      // dash frames left
+    u8  bounce;    // set by a bouncer so the short-hop cut doesn't clip the launch
+    u8  djump;     // double jump used
+    u8  charid;    // Character
+    u8  abil;      // ABIL_* bits
+    u8  air;       // air actions used since last touching the ground
+    u8  wall;      // frames the wall can't be re-grabbed after a wall jump
+    u8  clip;      // animation clip, chosen from physics state by update_anim
+    u8  step;      // step within the clip
+    u8  timer;     // ticks spent on the current step
+    u8  w;         // hitbox size in pixels (the player's box is HB_W x HB_H)
+    u8  h;
+}
+
+#define BOUNCE_W        20
+#define BOUNCE_H        25
+#define BOUNCE_SPEED    8.5     // touching the spring
+#define BOUNCE_HIGH     11.0    // ground pounding onto it
+#define BOUNCE_TILE     48      // VRAM tile index of the spring tiles (after player + bullet)
+#define BOUNCE_ATTR     0x30    // priority 3; the palette slot (OBJ palette 2) is in the frame
+
+u8 gem_sfx = 0;
+persist u8 gems_collected = 0;
+
+fn spawn_entity(u8 type, u16 ex, u16 ey, u8 param) {
+    Entities.create();
+    u16 slot = reg(X);
+    if (slot != 0xFFFF) {
+        Entities[slot].type  = type;
+        Entities[slot].x     = ex;
+        Entities[slot].y     = ey;
+        Entities[slot].param = param;
+        Entities[slot].anim  = 0;
+        Entities[slot].vx    = 0.0;
+        Entities[slot].vy    = 0.0;
+        Entities[slot].subx  = 0;
+        Entities[slot].suby  = 0;
+        Entities[slot].state  = 0;
+        Entities[slot].flags  = 0;
+        Entities[slot].dash   = 0;
+        Entities[slot].bounce = 0;
+        Entities[slot].djump  = 0;
+        Entities[slot].charid = 0;
+        Entities[slot].abil   = 0;
+        Entities[slot].air    = 0;
+        Entities[slot].wall   = 0;
+        Entities[slot].clip   = 0;
+        Entities[slot].step   = 0;
+        Entities[slot].timer  = 0;
+        Entities[slot].w      = ENT_SIZE;
+        Entities[slot].h      = ENT_SIZE;
+        if (type == OBJ_BOUNCER) {
+            Entities[slot].w = BOUNCE_W;
+            Entities[slot].h = BOUNCE_H;
+        }
+    }
+}
+
+// The player owns slot 0: it is created first, so Entities.create() returns 0. Its type is
+// OBJ_PLAYERSTART. player_x / player_y / player_vx ... in game.gel alias this slot's fields.
+fn spawn_player_entity() {
+    spawn_entity(OBJ_PLAYERSTART, 40, 186, 0);
+    Entities[0].charid = CHAR_DASHER;
+    Entities[0].abil   = ABIL_DASH;
+    Entities[0].w      = HB_W;
+    Entities[0].h      = HB_H;
+}
+
+// Every level object other than PlayerStart (which only places the player) becomes an entity.
+fn spawn_level_objects() {
+    u8 i = 0;
+    while (i < LEVEL_OBJECT_COUNT) {
+        if (obj_type(i) != OBJ_PLAYERSTART) {
+            spawn_entity(obj_type(i), obj_x(i), obj_y(i), obj_param(i));
+        }
+        i++;
+    }
+}
+
+// Box overlap between the player and entity e, using each one's own hitbox.
+fn player_touches(u16 e) {
+    if (Entities[e].x >= player_x + Entities[0].w) { return 0; }
+    if (Entities[e].x + Entities[e].w <= player_x) { return 0; }
+    if (Entities[e].y >= player_y + Entities[0].h) { return 0; }
+    if (Entities[e].y + Entities[e].h <= player_y) { return 0; }
+    return 1;
+}
+
+// A bouncer's point is the bottom-left of its sprite (w x h). Any falling player overlapping
+// it is launched; a ground pound launches harder.
+fn touches_bouncer(u16 e) {
+    if (Entities[e].x >= player_x + Entities[0].w) { return 0; }
+    if (Entities[e].x + Entities[e].w <= player_x) { return 0; }
+    if (player_y >= Entities[e].y) { return 0; }
+    if (player_y + Entities[0].h <= Entities[e].y - Entities[e].h) { return 0; }
+    return 1;
+}
+// Gravity, ground detection and collision for any non-player entity with MODE_FLAG_PHYSICS set.
+// The player runs the same move_x / move_y through update_player.
+fn entity_physics(u16 e) {
+    if (hit_down(e)) {
+        bit_set(Entities[e].flags, MODE_FLAG_ON_GROUND);
+    } else {
+        bit_clear(Entities[e].flags, MODE_FLAG_ON_GROUND);
+    }
+    Entities[e].vy += GRAVITY;
+    if (Entities[e].vy > MAX_FALL) {
+        Entities[e].vy = MAX_FALL;
+    }
+    move_x(e);
+    move_y(e);
+    update_anim(e);
+}
+
+// Runs once per logic step.
+fn update_entities() {
+    Entities.for_each(e) {
+        if (e != PLAYER_ENT) {
+            if (bit_test(Entities[e].flags, MODE_FLAG_PHYSICS)) {
+                entity_physics(e);
+            }
+        }
+        if (Entities[e].type == OBJ_GEM) {
+            if (player_touches(e)) {
+                std_sfx_play(gem_sfx, 15, 8, 8);
+                gems_collected++;
+                Entities[e].free();
+            }
+        } else if (Entities[e].type == OBJ_BOUNCER) {
+            if (Entities[e].anim > 0) {
+                Entities[e].anim++;
+                if (Entities[e].anim > 12) {
+                    Entities[e].anim = 0;
+                }
+            }
+            if (Entities[e].anim == 0) {
+                if (player_vy >= 0.0) {
+                    if (touches_bouncer(e)) {
+                        if (bit_test(mode_flags, MODE_FLAG_POUNDING)) {
+                            player_vy = -BOUNCE_HIGH;
+                        } else {
+                            player_vy = -BOUNCE_SPEED;
+                        }
+                        bit_clear(mode_flags, MODE_FLAG_POUNDING);
+                        bit_clear(mode_flags, MODE_FLAG_ON_GROUND);
+                        bouncing = 1;
+                        Entities[e].anim = 1;
+                        std_sfx_play(SFX_BOUNCE, 15, 8, 5);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn draw_bouncer(i16 sx, i16 sy, u8 anim) {
+    u8 frame = 0;
+    if (anim > 0) {
+        frame = 3;
+        if (anim > 4) { frame = 2; }
+        if (anim > 8) { frame = 1; }
+    }
+    std_draw_frame(SPRING_MS_FRAMES, frame, sx, sy - SPRING_MS_OFF_Y, BOUNCE_ATTR, BOUNCE_TILE);
+}
+// Runs once per frame. Entities off screen are skipped (OAM x/y are 8-bit).
+fn draw_entities() {
+    Entities.for_each(e) {
+        i16 sx = Entities[e].x - cam_x;
+        i16 sy = Entities[e].y - cam_y;
+        if (sx >= 0) {
+            if (sx <= 232) {
+                if (sy >= 32) {
+                    if (sy <= 216) {
+                        if (Entities[e].type == OBJ_BOUNCER) {
+                            draw_bouncer(sx, sy, Entities[e].anim);
+                        } else if (Entities[e].type == OBJ_GEM) {
+                            std_draw_sprite(sx, sy, PLAYER_MS_TILE_COUNT, 0x32);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

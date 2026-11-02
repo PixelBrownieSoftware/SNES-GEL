@@ -1,0 +1,90 @@
+// ---------------- Sound (SNESMOD) ----------------
+// Include with: #include "sound.gel"
+//
+// Put Impulse Tracker (.it) files in <project>/audio/. The build converts them into a soundbank
+// and writes build/soundbank.gel, which defines a constant for every module and sample, named
+// after the file / sample. Sound effects are samples of those modules, loaded one by one:
+//
+//     std_sound_init();                       // once, while the screen is blanked
+//     u8 jump = std_sfx_load(SFX_JUMP);       // returns the effect slot to play later
+//     std_music_load(MOD_THEME);
+//     std_music_play(0);
+//     ...
+//     std_sfx_play(jump, 15, 8, 8);           // volume 0-15, pan 0-15 (8 = centre), pitch 0-15 (8 = normal)
+//     std_sound_update();                     // once per frame; sends the queued commands
+//
+// Loading a module or effect is slow (it is copied to the SPC one word at a time), so do it
+// while the screen is blanked. The SPC700 has about 58 KB for samples.
+// The routines behind these functions are in snesmod.asm (gel_snd_*).
+
+#include "soundbank.gel"
+
+// Mailbox for the assembly routines (direct page $F9-$FE is reserved for it).
+mmio u8  snd_a @ 0x00F9;
+mmio u16 snd_x @ 0x00FA;
+mmio u16 snd_y @ 0x00FC;
+
+static fn std_sound_init() {
+    snd_a = SOUNDBANK_BANK;
+    asm { JSR gel_snd_init }
+}
+
+// Call once per frame (it only sends queued commands, for at most a few scanlines).
+static fn std_sound_update() {
+    asm { JSR gel_snd_update }
+}
+
+// Uploads one sample as a sound effect. Returns its slot, which is what std_sfx_play takes.
+// @param sample - SFX_* constant from soundbank.gel (named after the .wav file)
+static fn std_sfx_load(u16 sample) {
+    snd_x = sample;
+    asm { JSR gel_snd_sfx_load }
+}
+
+// Plays a loaded sound effect.
+// @param slot - value returned by std_sfx_load
+// @param volume - 0 (silent) to 15 (loudest)
+// @param pan - 0 (left) to 15 (right), 8 = centre
+// @param pitch - 0 to 15, 8 = original pitch; higher is faster and higher
+static fn std_sfx_play(u8 slot, u8 volume, u8 pan, u8 pitch) {
+    snd_a = (volume << 4) | pan;
+    snd_x = slot;
+    snd_y = pitch;
+    asm { JSR gel_snd_sfx_play }
+}
+
+// Uploads a module and every sample it uses (replaces the current music).
+static fn std_music_load(u16 module) {
+    snd_x = module;
+    asm { JSR gel_snd_music_load }
+}
+
+// Starts the loaded module at a pattern position (0 = the beginning).
+static fn std_music_play(u8 position) {
+    snd_x = position;
+    asm { JSR gel_snd_music_play }
+}
+
+static fn std_music_stop() {
+    asm { JSR gel_snd_music_stop }
+}
+
+// 0-255
+static fn std_music_volume(u8 volume) {
+    snd_x = volume;
+    asm { JSR gel_snd_music_volume }
+}
+
+// Fades the music volume to `target` (0-255); higher `speed` is faster.
+// @param target - final volume, 0-255
+// @param speed - fade speed; higher is faster
+static fn std_music_fade(u8 target, u8 speed) {
+    snd_x = target;
+    snd_y = speed;
+    asm { JSR gel_snd_music_fade }
+}
+
+// Number of cue events the module has raised since the last call.
+static fn std_music_cues() {
+    asm { JSR gel_snd_music_cues }
+}
