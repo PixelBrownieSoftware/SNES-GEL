@@ -67,6 +67,18 @@ mygame/
 - Levels: `level*.tmj` (Tiled) is converted to a tile map, a collision map and an object table.
   The tileset is `terrain.tsj`; a tile is solid when its `solid` property is set. If no `.tmj`
   exists the legacy `level.png` (colour to tile mapping) is used.
+- Slopes: add `slope_start` and `slope_end` properties (int or float, in pixels) to a tileset
+  tile. `slope_start` is the surface Y at the tile's left edge, measured down from the tile's top;
+  `slope_end` is the surface Y at the right edge. Both may lie outside 0-8 (-16 to 16) so
+  adjoining ramp tiles meet across tile rows, and the change across one tile must be under 16
+  pixels. Use fractions in eighths (e.g. 2.625 and 5.375) to build a straight ramp whose
+  gradient is not a whole number of pixels per tile, such as 1-in-3. Horizontal flips reverse the
+  endpoints; slopes cannot be vertically or diagonally flipped. The player walks onto a slope
+  that blocks them at foot level by stepping up to 8 pixels (plain solid tiles stay walls) and
+  walks down by snapping to the ground within 4 pixels. A collision-layer tile remains a
+  full solid block. In Mesen, enable collision bounds with F2 and the debug overlay with F3 to
+  draw nearby collision profiles: blue rises toward the right, red falls toward the right. Only
+  profiles within 64 pixels of the player are drawn, and only in platformer mode.
 - Metasprites are authored with the editor in `tools\metasprite-editor` and saved as
   `*.metasprite.json`.
 

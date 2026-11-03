@@ -12,6 +12,19 @@ import sys
 # no "solid" properties). Level tiles use BG palette 1 (tilemap attribute bits 10-12).
 SOLID_TILE_MAX = 7
 LEVEL_PALETTE_BITS = 1 << 10
+TILE_SIZE = 8
+NEAR_SLOPE_CODE = 0x40
+# A slope cell is 0x80 | index into the level's slope table. Profiles are authored as a signed
+# (start, delta) pair in eighths of a pixel, so ramps can be straight lines at any gradient
+# (e.g. 1 pixel up per 3 across), then expanded to per-column surface heights when emitted.
+SLOPE_SUBPIXELS = 8
+SLOPE_RANGE_PX = 16
+SLOPE_BIAS_PX = 8
+SLOPE_BIAS_EIGHTHS = SLOPE_BIAS_PX * SLOPE_SUBPIXELS
+MAX_SLOPE_PROFILES = 128
+# The level's slope table stores, per profile, the surface height (plus SLOPE_BIAS_PX so it is
+# never negative) of each of the tile's 8 pixel columns, so the game needs one read per lookup.
+SLOPE_TABLE_ENTRY_BYTES = TILE_SIZE
 
 # Level images are read by RGB colour, so palette order/re-indexing in the editor is irrelevant.
 # Any colour not listed (e.g. black) is an empty tile.
@@ -51,7 +64,7 @@ def check_level_size(label, width, height):
         fail_level(label, f"must be 32 or 64 tiles wide and at least {MIN_LEVEL_HEIGHT} tiles high "
                           f"(got {width}x{height})")
     # map (2 bytes/tile) + collision (1 byte/tile) + a full object table must fit one bank
-    max_h = (LEVEL_BANK_SIZE - 1 - 255 * OBJECT_SIZE) // (width * 3)
+    max_h = (LEVEL_BANK_SIZE - 1 - 255 * OBJECT_SIZE - SLOPE_TABLE_ENTRY_BYTES * MAX_SLOPE_PROFILES) // (width * 3)
     if height > max_h:
         fail_level(label, f"too tall for one ROM bank: at {width} tiles wide the limit is {max_h} tiles "
                           f"(got {height})")
@@ -85,25 +98,67 @@ def process_png_level(img, asset_name, out_dir, gel_lines, asm_lines, rom_offset
 
 
 # ---------------- Tiled maps ----------------
-def tiled_tile_props(tileset, base_dir):
-    """Returns (tile size, {local id: solid}) for a Tiled tileset (embedded or external .tsj)."""
+def tiled_tile_props(tileset, base_dir, label):
+    """Returns (tile size, {local id: solid}, {local id: (left y, right y)})."""
     if "source" in tileset:
         path = os.path.join(base_dir, tileset["source"])
         with open(path) as f:
             tileset = json.load(f)
     solid = {}
+    slope_starts = {}
+    slope_ends = {}
     for tile in tileset.get("tiles", []):
         for prop in tile.get("properties", []):
             if prop.get("name") == "solid":
                 solid[tile["id"]] = bool(prop.get("value"))
-    return (tileset.get("tilewidth"), tileset.get("tileheight")), solid
+            elif prop.get("name") == "slope_start":
+                slope_starts[tile["id"]] = prop.get("value")
+            elif prop.get("name") == "slope_end":
+                slope_ends[tile["id"]] = prop.get("value")
+    slopes = {}
+    for tile in slope_starts.keys() | slope_ends.keys():
+        if tile not in slope_starts or tile not in slope_ends:
+            fail_level(label, f"tile id {tile} needs both 'slope_start' and 'slope_end' properties")
+        start, end = slope_starts[tile], slope_ends[tile]
+        numbers = (int, float)
+        if (type(start) not in numbers or type(end) not in numbers or
+                not -SLOPE_RANGE_PX <= start <= SLOPE_RANGE_PX or
+                not -SLOPE_RANGE_PX <= end <= SLOPE_RANGE_PX):
+            fail_level(label, f"tile id {tile} has invalid slope endpoints ({start!r}, {end!r}); "
+                              f"they must be numbers from -{SLOPE_RANGE_PX} to {SLOPE_RANGE_PX}")
+        start8, end8 = round(start * SLOPE_SUBPIXELS), round(end * SLOPE_SUBPIXELS)
+        if start8 == end8:
+            fail_level(label, f"tile id {tile} slope endpoints must be different")
+        slopes[tile] = (start8, end8)
+    return (tileset.get("tilewidth"), tileset.get("tileheight")), solid, slopes
+
+
+def _slope_surface(profile, pixel_x):
+    """Surface Y (whole pixels, relative to the tile top) of a (start, delta) profile in eighths
+    of a pixel at pixel column pixel_x. Mirrors slope_surface_at_x in game.gel."""
+    start, delta = profile
+    if delta < 0:
+        eighths = SLOPE_BIAS_EIGHTHS + start - (((pixel_x + 1) * -delta) >> 3)
+    else:
+        eighths = SLOPE_BIAS_EIGHTHS + start + (((pixel_x + 1) * delta) >> 3)
+    return (eighths >> 3) - SLOPE_BIAS_PX
+
+
+def _merge_slope_profiles(old, new, label, x, y):
+    old_surfaces = [_slope_surface(old, px) for px in range(8)]
+    new_surfaces = [_slope_surface(new, px) for px in range(8)]
+    if all(new_y <= old_y for new_y, old_y in zip(new_surfaces, old_surfaces)):
+        return new
+    if all(old_y <= new_y for new_y, old_y in zip(new_surfaces, old_surfaces)):
+        return old
+    fail_level(label, f"slope profiles cross at collision tile ({x},{y})")
 
 
 def process_tiled_level(path, asset_name, out_dir, gel_lines, asm_lines, rom_offset):
     """Read a Tiled .tmj map: the first tile layer is the visible map (tile id = id within the
-    tileset, so terrain.png tile N is Tiled tile N). Solid tiles come from a boolean tile
-    property "solid" in the tileset, and any tile painted on a layer named "collision" is solid
-    too. Object layers become the level's object table."""
+    tileset, so terrain.png tile N is Tiled tile N). Solid tiles use the boolean "solid" property;
+    ramps use their "slope_start"/"slope_end" surface coordinates. Any tile painted on a layer
+    named "collision" is solid. Object layers become the level's object table."""
     base_dir = os.path.dirname(path)
     label = os.path.basename(path)
     with open(path) as f:
@@ -119,10 +174,9 @@ def process_tiled_level(path, asset_name, out_dir, gel_lines, asm_lines, rom_off
     if not tilesets:
         fail_level(label, "the map has no tileset")
     firstgid = tilesets[0]["firstgid"]
-    tile_size, solid_props = tiled_tile_props(tilesets[0], base_dir)
+    tile_size, solid_props, slope_props = tiled_tile_props(tilesets[0], base_dir, label)
     if tile_size != (8, 8):
         fail_level(label, f"tileset tiles must be 8x8 (got {tile_size[0]}x{tile_size[1]})")
-
     tile_layer = None
     coll_layer = None
     for layer in data["layers"]:
@@ -135,12 +189,13 @@ def process_tiled_level(path, asset_name, out_dir, gel_lines, asm_lines, rom_off
     if tile_layer is None:
         fail_level(label, "the map has no tile layer")
 
-    ids, flips = [], []
+    ids, flips, hflips = [], [], []
     for y in range(height):
-        row, frow = [], []
+        row, frow, hrow = [], [], []
         for x in range(width):
             gid = tile_layer["data"][y * width + x]
             flag = gid & 0xC0000000
+            diagonal_flip = gid & 0x20000000
             gid &= 0x1FFFFFFF
             if gid == 0:
                 tile = 0
@@ -148,13 +203,58 @@ def process_tiled_level(path, asset_name, out_dir, gel_lines, asm_lines, rom_off
                 tile = gid - firstgid
                 if not 0 <= tile < 1024:
                     fail_level(label, f"tile at ({x},{y}) is outside the first tileset")
+            if tile in slope_props and (flag & 0x40000000 or diagonal_flip):
+                fail_level(label, f"slope tile at ({x},{y}) cannot be vertically or diagonally flipped")
             row.append(tile)
             frow.append(((flag >> 31) & 1) << 14 | ((flag >> 30) & 1) << 15)
+            hrow.append(bool(flag & 0x80000000))
         ids.append(row)
         flips.append(frow)
+        hflips.append(hrow)
 
-    if solid_props:
-        solid = [[1 if solid_props.get(ids[y][x]) else 0 for x in range(width)] for y in range(height)]
+    slope_table = []
+    if solid_props or slope_props:
+        solid = []
+        slope_cells = {}
+        row_eighths = TILE_SIZE * SLOPE_SUBPIXELS
+        for y in range(height):
+            row = []
+            for x in range(width):
+                tile = ids[y][x]
+                if tile in slope_props:
+                    start, end = slope_props[tile]
+                    if hflips[y][x]:
+                        start, end = end, start
+                    delta = end - start
+                    if not -128 <= delta <= 127:
+                        fail_level(label, f"slope tile at ({x},{y}) changes too steeply "
+                                          f"({delta / SLOPE_SUBPIXELS} pixels over one tile)")
+                    # The profile lives in the tile row where its surface starts.
+                    row_offset = (start - 1) // row_eighths if start > 0 else start // row_eighths
+                    target_y = y + row_offset
+                    if not 0 <= target_y < height:
+                        fail_level(label, f"slope tile at ({x},{y}) extends outside the collision map")
+                    start -= row_offset * row_eighths
+                    if not 0 <= start <= row_eighths:
+                        fail_level(label, f"cannot normalize slope tile at ({x},{y})")
+                    profile = (start, delta)
+                    old = slope_cells.get((target_y, x))
+                    if old is not None:
+                        profile = _merge_slope_profiles(old, profile, label, x, y)
+                    slope_cells[(target_y, x)] = profile
+                    row.append(0)
+                elif solid_props:
+                    row.append(1 if solid_props.get(tile) else 0)
+                else:
+                    row.append(1 if 1 <= tile <= SOLID_TILE_MAX else 0)
+            solid.append(row)
+        for profile in sorted(set(slope_cells.values())):
+            slope_table.append(profile)
+        if len(slope_table) > MAX_SLOPE_PROFILES:
+            fail_level(label, f"too many different slope profiles ({len(slope_table)}; "
+                              f"the limit is {MAX_SLOPE_PROFILES})")
+        for (y, x), profile in slope_cells.items():
+            solid[y][x] = 0x80 | slope_table.index(profile)
     else:
         print(f"WARNING: '{label}': tileset has no 'solid' tile properties; "
               f"treating tile ids 1..{SOLID_TILE_MAX} as solid.")
@@ -165,8 +265,16 @@ def process_tiled_level(path, asset_name, out_dir, gel_lines, asm_lines, rom_off
                 if coll_layer["data"][y * width + x] & 0x1FFFFFFF:
                     solid[y][x] = 1
 
+    # Empty tiles next to a slope above/below get NEAR_SLOPE_CODE so the runtime can skip the
+    # neighbour lookups for plain air.
+    marks = [(y, x) for y in range(height) for x in range(width)
+             if solid[y][x] == 0 and any(0 <= ny < height and solid[ny][x] & 0x80
+                                         for ny in (y - 1, y + 1))]
+    for y, x in marks:
+        solid[y][x] = NEAR_SLOPE_CODE
+
     return emit_level(ids, solid, asset_name, label, out_dir, gel_lines, asm_lines, rom_offset, flips,
-                      read_tiled_objects(data, label))
+                      read_tiled_objects(data, label), slope_table)
 
 
 def read_tiled_objects(data, label):
@@ -218,10 +326,11 @@ def emit_objects(objects, prefix, out_dir, gel_lines, asm_lines, bank, offset):
 
 
 def emit_level(ids, solid, asset_name, label, out_dir, gel_lines, asm_lines, rom_offset, flips=None,
-               objects=()):
-    """Write the VRAM tilemap, collision map and object table into the level's own bank. `solid`
-    is a grid of 0/1, or None to derive it from the tile ids (the PNG workflow). `flips` holds
-    per-tile tilemap flip bits. rom_offset (bank 0) is returned unchanged."""
+               objects=(), slope_table=()):
+    """Write the VRAM tilemap, collision map, slope table and object table into the level's own
+    bank. `solid` is a grid of collision codes, or None to derive it from the tile ids (the PNG
+    workflow). `slope_table` is a list of (start, delta) eighth-pixel pairs indexed by slope codes.
+    `flips` holds per-tile tilemap flip bits. rom_offset (bank 0) is returned unchanged."""
     prefix = asset_name.upper()
     height, width = len(ids), len(ids[0])
     bank = _next_bank[0]
@@ -240,13 +349,21 @@ def emit_level(ids, solid, asset_name, label, out_dir, gel_lines, asm_lines, rom
     if solid is None:
         solid = [[1 if 1 <= ids[y][x] <= SOLID_TILE_MAX else 0 for x in range(width)] for y in range(height)]
     collision = bytearray(solid[y][x] for y in range(height) for x in range(width))
+    slopes = bytearray()
+    for profile in slope_table:
+        slopes.extend(_slope_surface(profile, px) + SLOPE_BIAS_PX for px in range(TILE_SIZE))
+    if not slopes:
+        slopes.extend(bytes(SLOPE_TABLE_ENTRY_BYTES))
 
     map_file = os.path.join(out_dir, f"{asset_name}_map.bin")
     coll_file = os.path.join(out_dir, f"{asset_name}_coll.bin")
+    slope_file = os.path.join(out_dir, f"{asset_name}_slopes.bin")
     with open(map_file, "wb") as f:
         f.write(tilemap)
     with open(coll_file, "wb") as f:
         f.write(collision)
+    with open(slope_file, "wb") as f:
+        f.write(slopes)
 
     gel_lines.append(f"#define {prefix}_WIDTH {width}")
     gel_lines.append(f"#define {prefix}_HEIGHT {height}")
@@ -262,7 +379,8 @@ def emit_level(ids, solid, asset_name, label, out_dir, gel_lines, asm_lines, rom
     gel_lines.append(f"#define {prefix}_BANK 0x{bank:02X}")
 
     offset = 0x8000
-    for sym, path, data in ((f"{prefix}_MAP", map_file, tilemap), (f"{prefix}_COLL", coll_file, collision)):
+    for sym, path, data in ((f"{prefix}_MAP", map_file, tilemap), (f"{prefix}_COLL", coll_file, collision),
+                            (f"{prefix}_SLOPES", slope_file, slopes)):
         gel_lines.append(f"#define {sym} 0x{offset:04X}")
         asm_lines.append(f"org ${bank:02X}{offset:04X}")
         asm_lines.append(f"{sym}:")

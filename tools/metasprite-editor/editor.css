@@ -45,6 +45,56 @@ h3 { font-size: 13px; }
 .eyebrow { color: var(--accent); font-size: 10px; font-weight: 800; letter-spacing: .14em; }
 
 .top-actions, .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.server-select { display: flex; align-items: center; gap: 6px; }
+.server-select select, .asset-picker select {
+  min-width: 130px;
+  height: 34px;
+  padding: 0 8px;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #11161d;
+}
+.asset-picker { display: flex; gap: 6px; margin: 0 0 10px; }
+.asset-picker select { flex: 1; min-width: 0; }
+.palette-viewer { margin: 0 0 12px; padding: 9px; border: 1px solid var(--line); border-radius: 6px; background: #11171e; }
+.palette-viewer h3 { margin-bottom: 7px; color: var(--muted); font-size: 11px; }
+.palette-colors { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 5px; }
+.palette-swatch { display: grid; min-width: 0; gap: 2px; justify-items: center; color: var(--muted); font: 9px ui-monospace, monospace; }
+.palette-swatch-color { width: 100%; aspect-ratio: 1.5; border: 1px solid #ffffff44; border-radius: 3px; }
+.palette-swatch-color.transparent {
+  background-color: #202834;
+  background-image: linear-gradient(45deg, #697586 25%, transparent 25%),
+                    linear-gradient(-45deg, #697586 25%, transparent 25%),
+                    linear-gradient(45deg, transparent 75%, #697586 75%),
+                    linear-gradient(-45deg, transparent 75%, #697586 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+}
+.palette-viewer .hint { grid-column: 1 / -1; margin: 0; }
+.project-dialog {
+  width: min(360px, calc(100vw - 32px));
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--panel);
+  box-shadow: 0 16px 48px #0008;
+}
+.project-dialog::backdrop { background: #080b10b8; }
+.project-dialog h2 { margin-bottom: 14px; }
+.project-dialog .field { display: grid; gap: 5px; }
+.project-dialog input, .project-dialog select {
+  width: 100%;
+  height: 36px;
+  padding: 0 9px;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #11161d;
+}
+.project-dialog .field + .field { margin-top: 12px; }
+.project-dialog .toolbar { justify-content: flex-end; margin-top: 16px; }
 .button {
   min-height: 36px;
   padding: 0 13px;

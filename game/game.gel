@@ -170,30 +170,112 @@ fn obj_find(u8 type) {
 }
 
 // ---------------- Level collision ----------------
-fn solid_at(u16 wx, u16 wy) {
-    if (wx >= LEVEL_WIDTH_PX) { return 1; }
-    if (wy >= LEVEL_HEIGHT_PX) { return 1; }
-    return peek8l(LEVEL_BANK, LEVEL_COLL + (((wy >> 3) << LEVEL_ROW_SHIFT) + (wx >> 3)));
+#define TILE_SIZE_PX                 8
+#define TILE_COORD_MASK              7
+#define TILE_COORD_SHIFT             3
+#define TILE_LAST_PIXEL              7
+#define TILE_ROW_MASK                0xFFF8
+#define COLLISION_EMPTY              0
+#define COLLISION_SOLID              1
+// Empty tile with a slope directly above or below it (set by level_pack.py): the only empty
+// tiles where solid_at must look at the neighbouring rows.
+#define COLLISION_NEAR_SLOPE         0x40
+#define COLLISION_SLOPE_FLAG         0x80
+// A slope cell is COLLISION_SLOPE_FLAG | index into the level's slope table (LEVEL_SLOPES): one
+// byte per pixel column (SLOPE_PROFILE_SHIFT gives 8 per profile), the surface height relative
+// to the tile top plus SLOPE_BIAS_PX so it is never negative. See level_pack.py.
+#define SLOPE_INDEX_MASK             0x7F
+#define SLOPE_PROFILE_SHIFT          3
+// slope_surface_at_x returns the surface height plus this.
+#define SLOPE_BIAS_PX                8
+#define SLOPE_STEP_UP_PX             8
+#define SLOPE_SNAP_DOWN_PX           4
+
+fn collision_code_at(u16 wx, u16 wy) {
+    if (wx >= LEVEL_WIDTH_PX) { return COLLISION_SOLID; }
+    if (wy >= LEVEL_HEIGHT_PX) { return COLLISION_SOLID; }
+    return peek8l(LEVEL_BANK, LEVEL_COLL + (((wy >> TILE_COORD_SHIFT) << LEVEL_ROW_SHIFT) +
+                                           (wx >> TILE_COORD_SHIFT)));
 }
 
-// Any solid tile along a vertical strip at wx (wy_bot is inclusive).
-fn solid_v(u16 wx, u16 wy_top, u16 wy_bot) {
-    u16 y = wy_top;
-    while (y < wy_bot) {
-        if (solid_at(wx, y)) { return 1; }
-        y += 8;
+// Surface height (in pixels, relative to the tile top) plus SLOPE_BIAS_PX at column wx.
+fn slope_surface_at_x(u8 code, u16 wx) {
+    return peek8l(LEVEL_BANK, LEVEL_SLOPES + ((code & SLOPE_INDEX_MASK) << SLOPE_PROFILE_SHIFT) +
+                              (wx & TILE_COORD_MASK));
+}
+
+// `code` is the collision byte already read at (wx, wy), so callers that have it avoid a second read.
+fn solid_with_code(u16 wx, u16 wy, u8 code) {
+    if (code == COLLISION_EMPTY) { return 0; }
+    if (code != COLLISION_NEAR_SLOPE && !(code & COLLISION_SLOPE_FLAG)) { return 1; }
+
+    u8 current_code = code;
+    u16 row = wy & TILE_ROW_MASK;
+    u16 y_in_tile = wy & TILE_COORD_MASK;
+    u16 surface;
+    if (row >= TILE_SIZE_PX) {
+        code = collision_code_at(wx, row - TILE_SIZE_PX);
+        if (code & COLLISION_SLOPE_FLAG) {
+            surface = slope_surface_at_x(code, wx);
+            if (y_in_tile + TILE_SIZE_PX + SLOPE_BIAS_PX >= surface) { return 1; }
+        }
     }
-    return solid_at(wx, wy_bot);
+    if (current_code & COLLISION_SLOPE_FLAG) {
+        surface = slope_surface_at_x(current_code, wx);
+        if (y_in_tile + SLOPE_BIAS_PX >= surface) { return 1; }
+    }
+    if (row + TILE_SIZE_PX < LEVEL_HEIGHT_PX) {
+        code = collision_code_at(wx, row + TILE_SIZE_PX);
+        if (code & COLLISION_SLOPE_FLAG) {
+            surface = slope_surface_at_x(code, wx);
+            if (surface <= TILE_LAST_PIXEL && y_in_tile >= surface) { return 1; }
+        }
+    }
+    return 0;
+}
+
+fn solid_at(u16 wx, u16 wy) {
+    return solid_with_code(wx, wy, collision_code_at(wx, wy));
+}
+
+// Any solid tile along a vertical strip at wx (wy_bot is inclusive). Scans from the bottom up:
+// the feet are where slopes and ground are, so a blocked probe usually exits on the first sample.
+fn solid_v(u16 wx, u16 wy_top, u16 wy_bot) {
+    u16 y = wy_bot;
+    u8 scanning = 1;
+    while (scanning) {
+        u8 code = collision_code_at(wx, y);
+        if (code != COLLISION_EMPTY) {
+            if (solid_with_code(wx, y, code)) { return 1; }
+        }
+        u16 tile_top = y & TILE_ROW_MASK;
+        if (tile_top <= wy_top) {
+            scanning = 0;
+        } else {
+            y = tile_top - 1;
+        }
+    }
+    return 0;
 }
 
 // Any solid tile along a horizontal strip at wy (wx_right is inclusive).
 fn solid_h(u16 wy, u16 wx_left, u16 wx_right) {
     u16 x = wx_left;
-    while (x < wx_right) {
-        if (solid_at(x, wy)) { return 1; }
-        x += 8;
+    while (x <= wx_right) {
+        u16 tile_right = x | TILE_COORD_MASK;
+        if (tile_right > wx_right) { tile_right = wx_right; }
+        // Plain air (the common case) costs a single collision read.
+        u8 code = collision_code_at(x, wy);
+        if (code != COLLISION_EMPTY) {
+            if (solid_with_code(x, wy, code)) { return 1; }
+            // A slope is monotonic within a tile, so checking both ends catches its floor efficiently.
+            if (tile_right != x) {
+                if (solid_at(tile_right, wy)) { return 1; }
+            }
+        }
+        x = tile_right + 1;
     }
-    return solid_at(wx_right, wy);
+    return 0;
 }
 
 // Collision probes and movement work on any entity slot, so every entity shares the same physics.
@@ -202,33 +284,121 @@ fn hit_left(u16 e)  { return solid_v(Entities[e].x - 1,             Entities[e].
 fn hit_down(u16 e)  { return solid_h(Entities[e].y + Entities[e].h, Entities[e].x, Entities[e].x + Entities[e].w - 1); }
 fn hit_up(u16 e)    { return solid_h(Entities[e].y - 1,             Entities[e].x, Entities[e].x + Entities[e].w - 1); }
 
+// Walking into a slope: lift the entity (up to SLOPE_STEP_UP_PX) to the height where the
+// column it is walking into is clear. Returns 1 and keeps the new height if that worked.
+fn step_up(u16 e, u8 move_right) {
+    if (!bit_test(Entities[e].flags, MODE_FLAG_ON_GROUND)) { return 0; }
+
+    u16 side_x;
+    if (move_right) { side_x = Entities[e].x + Entities[e].w; }
+    else { side_x = Entities[e].x - 1; }
+    u8 ahead = collision_code_at(side_x, Entities[e].y + Entities[e].h - 1);
+    if (!(ahead & COLLISION_SLOPE_FLAG)) { return 0; }
+
+    // Measure the step on the one column being walked into, then verify the lifted hitbox once
+    // instead of re-testing it for every pixel. The slope table gives the lift directly; the
+    // probe loop below is the fallback when that guess doesn't land on the surface.
+    u16 feet = Entities[e].y + Entities[e].h - 1;
+    u8 lift = 1;
+    u16 base = (feet & TILE_COORD_MASK) + 1 + SLOPE_BIAS_PX;
+    u16 surface = slope_surface_at_x(ahead, side_x);
+    if (base > surface) {
+        u16 guess = base - surface;
+        if (guess > 1) {
+            if (guess <= SLOPE_STEP_UP_PX) {
+                if (solid_at(side_x, feet - guess + 1)) { lift = guess; }
+            }
+        }
+    }
+    while (lift <= SLOPE_STEP_UP_PX) {
+        if (!solid_at(side_x, feet - lift)) {
+            u16 old_y = Entities[e].y;
+            Entities[e].y = old_y - lift;
+            u8 blocked = solid_h(Entities[e].y, Entities[e].x, Entities[e].x + Entities[e].w - 1);
+            if (!blocked) {
+                if (move_right) { blocked = hit_right(e); }
+                else { blocked = hit_left(e); }
+            }
+            if (!blocked) { return 1; }
+            Entities[e].y = old_y;
+            return 0;
+        }
+        lift++;
+    }
+    return 0;
+}
+
+// Walking down a slope: drop back onto the ground (up to SLOPE_SNAP_DOWN_PX) instead of
+// stepping off it for a frame.
+fn step_down(u16 e) {
+    if (!bit_test(Entities[e].flags, MODE_FLAG_ON_GROUND)) { return 0; }
+    if (Entities[e].vy < 0.0) { return 0; }
+
+    u16 old_y = Entities[e].y;
+    u8 drop = 0;
+    while (drop < SLOPE_SNAP_DOWN_PX) {
+        if (hit_down(e)) {
+            if (drop > 0) {
+                Entities[e].vy = 0.0;
+                Entities[e].suby = 0;
+            }
+            return 1;
+        }
+        Entities[e].y++;
+        drop++;
+    }
+    if (hit_down(e)) {
+        Entities[e].vy = 0.0;
+        Entities[e].suby = 0;
+        return 1;
+    }
+    Entities[e].y = old_y;
+    return 0;
+}
+
 // ---------------- Movement (1 pixel at a time so nothing tunnels) ----------------
 fn move_x(u16 e) {
     i16 t = Entities[e].subx + Entities[e].vx;
     i16 dx = t >> 8;
+    u8 moved = 0;
     Entities[e].subx = t & 0xFF;
     while (dx > 0) {
         if (hit_right(e)) {
-            Entities[e].vx = 0.0;
-            Entities[e].subx = 0;
-            Entities[e].dash = 0;
-            dx = 0;
+            if (step_up(e, 1)) {
+                Entities[e].x++;
+                moved = 1;
+                dx--;
+            } else {
+                Entities[e].vx = 0.0;
+                Entities[e].subx = 0;
+                Entities[e].dash = 0;
+                dx = 0;
+            }
         } else {
             Entities[e].x++;
+            moved = 1;
             dx--;
         }
     }
     while (dx < 0) {
         if (hit_left(e)) {
-            Entities[e].vx = 0.0;
-            Entities[e].subx = 0;
-            Entities[e].dash = 0;
-            dx = 0;
+            if (step_up(e, 0)) {
+                Entities[e].x--;
+                moved = 1;
+                dx++;
+            } else {
+                Entities[e].vx = 0.0;
+                Entities[e].subx = 0;
+                Entities[e].dash = 0;
+                dx = 0;
+            }
         } else {
             Entities[e].x--;
+            moved = 1;
             dx++;
         }
     }
+    if (moved) { step_down(e); }
 }
 
 fn move_y(u16 e) {
@@ -367,7 +537,13 @@ fn render_player() {
     );
 }
 
+// The HUD text only changes with the ability, so it is redrawn then (255 forces the first draw).
+#define HUD_UNDRAWN 255
+u8 hud_char = HUD_UNDRAWN;
+
 fn render_ability_hud() {
+    if (player_char == hud_char) { return 0; }
+    hud_char = player_char;
     std_print(1, 1, "ABILITY:");
     std_print(10, 1, "         ");
     switch (player_char) {

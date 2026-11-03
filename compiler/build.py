@@ -281,10 +281,20 @@ def write_hook(layout, source, asm_text=""):
     ram_vars = parse_ram_vars(asm_text)
     ram_vars.update(parse_slot_aliases(asm_text, source))
     lua_vars = ", ".join(f'{n} = {{"{t}", {a}}}' for n, (t, a) in sorted(ram_vars.items()))
+    asset_header = os.path.join(BUILD, "assets.gel")
+    asset_source = ""
+    if os.path.isfile(asset_header):
+        with open(asset_header, encoding="utf-8") as f:
+            asset_source = f.read()
+    asset_defines = {name: int(value, 0) for name, value in re.findall(
+        r"^\s*#define\s+(LEVEL_WIDTH|LEVEL_HEIGHT)\s+(0x[0-9a-fA-F]+|[0-9]+)\b",
+        asset_source, re.MULTILINE)}
     replacements = {
         "@BUILD_DIR@": BUILD.replace("\\", "/") + "/",
         "@OVERLAY_FILE@": PROJECT.replace("\\", "/") + "/debug_overlay.lua",
         "@GEL_VARS@": "{" + lua_vars + "}",
+        "@LEVEL_WIDTH@": str(asset_defines.get("LEVEL_WIDTH", "nil")),
+        "@LEVEL_HEIGHT@": str(asset_defines.get("LEVEL_HEIGHT", "nil")),
     }
     for name in ("player_x", "player_y", "cam_x", "cam_y"):
         entry = layout.get(name) or ram_vars.get(name)

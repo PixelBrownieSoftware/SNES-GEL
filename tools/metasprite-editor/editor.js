@@ -31,6 +31,10 @@
   };
   const undoStack = [];
   let dirHandle = null;
+  let serverMode = false;
+  let serverCatalog = null;
+  let folderProjects = [];
+  let activeServerProject = "";
   let toastTimer;
   let play = null;
 
@@ -80,10 +84,38 @@
   async function decodeBlob(blob) {
     const url = URL.createObjectURL(blob);
     try {
-      return await decodeSource(url);
+      const decoded = await decodeSource(url);
+      decoded.palette = await decodeIndexedPalette(await blob.arrayBuffer());
+      return decoded;
     } finally {
       URL.revokeObjectURL(url);
     }
+  }
+
+  async function decodeIndexedPalette(buffer) {
+    const bytes = new Uint8Array(buffer);
+    const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+    if (bytes.length < 33 || !signature.every((value, i) => bytes[i] === value) || bytes[25] !== 3) return null;
+    const view = new DataView(buffer);
+    let palette = null;
+    let transparency = new Uint8Array(0);
+    for (let offset = 8; offset + 12 <= bytes.length;) {
+      const length = view.getUint32(offset);
+      const type = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8));
+      const start = offset + 8;
+      if (start + length + 4 > bytes.length) return null;
+      if (type === "PLTE") palette = bytes.slice(start, start + length);
+      else if (type === "tRNS") transparency = bytes.slice(start, start + length);
+      offset = start + length + 4;
+      if (type === "IEND") break;
+    }
+    if (!palette || palette.length % 3 !== 0) return null;
+    return Array.from({ length: 16 }, (_, i) => ({
+      r: palette[i * 3] || 0,
+      g: palette[i * 3 + 1] || 0,
+      b: palette[i * 3 + 2] || 0,
+      a: i === 0 ? 0 : (transparency[i] === undefined ? 255 : transparency[i])
+    }));
   }
 
   async function decodeSource(src) {
@@ -101,6 +133,7 @@
     layer.width = decoded.width;
     layer.height = decoded.height;
     layer.data = decoded.data;
+    layer.paletteColors = decoded.palette || null;
     layer.missing = false;
   }
 
@@ -110,6 +143,51 @@
       cell: { w: model.stage.columns, h: model.stage.rows },
       canvas: null, width: 0, height: 0, data: null, missing: true, pending: false, ...extra
     };
+  }
+
+  function renderPalette() {
+    const layer = curLayer();
+    $("palette-title").textContent = layer
+      ? `${layer.name} · OBJ P${layer.palette}`
+      : "Palette";
+    const container = $("palette-colors");
+    container.textContent = "";
+    if (!layer) {
+      const hint = document.createElement("p");
+      hint.className = "hint";
+      hint.textContent = "Select a layer to view its indexed colors.";
+      container.append(hint);
+      return;
+    }
+    if (!layer.paletteColors) {
+      const hint = document.createElement("p");
+      hint.className = "hint";
+      hint.textContent = "This image has no indexed PNG palette. The build requires indexed PNGs.";
+      container.append(hint);
+      return;
+    }
+    layer.paletteColors.forEach((color, index) => {
+      const swatch = document.createElement("div");
+      swatch.className = "palette-swatch";
+      const sample = document.createElement("div");
+      sample.className = `palette-swatch-color${index === 0 ? " transparent" : ""}`;
+      if (index !== 0) sample.style.backgroundColor = `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`;
+      sample.title = index === 0 ? "0 · transparent" : `${index} · #${[color.r, color.g, color.b].map((v) => v.toString(16).padStart(2, "0")).join("").toUpperCase()}`;
+      const label = document.createElement("span");
+      label.textContent = index.toString(16).toUpperCase();
+      swatch.append(sample, label);
+      container.append(swatch);
+    });
+  }
+
+  async function serverRequest(path, options) {
+    const response = await fetch(path, options);
+    if (!response.ok) {
+      let message = `${response.status} ${response.statusText}`;
+      try { message = (await response.json()).error || message; } catch (_) { /* use HTTP status */ }
+      throw new Error(message);
+    }
+    return response;
   }
 
   // ---- undo ----------------------------------------------------------------
@@ -576,6 +654,7 @@
 
   function renderAll() {
     renderLayers();
+    renderPalette();
     renderSheet();
     renderStage();
     renderPreviews();
@@ -1117,6 +1196,41 @@
 
   async function saveProject() {
     const filename = `${(model.name || "player").toLowerCase().replace(/[^a-z0-9_]/g, "_")}.metasprite.json`;
+    const analysis = Pack.analyze(packLayers(), model.frames, model.clips);
+    if (!analysis.frames.some((frame) => frame.sprites > 0)) {
+      toast("Place at least one non-transparent tile before saving a metasprite project.");
+      return;
+    }
+    if (serverMode) {
+      try {
+        if (serverCatalog.projects.includes(filename) && filename !== activeServerProject) {
+          toast(`A project named ${filename} already exists. Choose another asset name.`);
+          return;
+        }
+        for (const layer of model.layers) {
+          if (layer.pending && layer.blob) {
+            await serverRequest(`/api/assets/${encodeURIComponent(layer.source)}`, {
+              method: "POST",
+              headers: { "Content-Type": "image/png" },
+              body: layer.blob
+            });
+            layer.pending = false;
+          }
+        }
+        const response = await serverRequest(`/api/projects/${encodeURIComponent(filename)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(projectData(false))
+        });
+        serverCatalog = await response.json();
+        activeServerProject = filename;
+        renderServerCatalog(filename);
+        toast(`Saved ${filename}. The bridge will rebuild the ROM.`);
+      } catch (e) {
+        toast(`Could not save: ${e.message}`);
+      }
+      return;
+    }
     if (!dirHandle) {
       download(filename, JSON.stringify(projectData(true), null, 1));
       toast(`Downloaded ${filename}. Put it and the layer PNGs in your assets folder.`);
@@ -1174,7 +1288,8 @@
       });
       try {
         if (fromFolder && dirHandle) applyImage(layer, await decodeBlob(await readFromFolder(l.source)));
-        else if (embedded[l.source]) applyImage(layer, await decodeSource(embedded[l.source]));
+        else if (serverMode) applyImage(layer, await decodeBlob(await (await serverRequest(`/api/assets/${encodeURIComponent(l.source)}`)).blob()));
+        else if (embedded[l.source]) applyImage(layer, await decodeBlob(await (await fetch(embedded[l.source])).blob()));
       } catch (e) {
         if (embedded[l.source]) {
           try { applyImage(layer, await decodeSource(embedded[l.source])); } catch (_) { /* fall through */ }
@@ -1223,6 +1338,7 @@
       for await (const [name, entry] of handle.entries()) {
         if (entry.kind === "file" && name.toLowerCase().endsWith(".metasprite.json")) projects.push(name);
       }
+      folderProjects = projects;
       if (!projects.length) { toast(`No *.metasprite.json in ${handle.name}. Add layer PNGs and save to create one.`); return; }
       let pick = projects[0];
       if (projects.length > 1) {
@@ -1236,17 +1352,171 @@
   }
 
   async function reloadArt() {
-    if (!dirHandle) { toast("Open the assets folder first."); return; }
+    if (!dirHandle && !serverMode) { toast("Open the assets folder first."); return; }
     try {
-      await ensurePermission(dirHandle, "read");
+      if (dirHandle) await ensurePermission(dirHandle, "read");
       let count = 0;
       for (const l of model.layers) {
-        try { applyImage(l, await decodeBlob(await readFromFolder(l.source))); count++; } catch (_) { l.missing = true; }
+        try {
+          const blob = serverMode
+            ? await (await serverRequest(`/api/assets/${encodeURIComponent(l.source)}`)).blob()
+            : await readFromFolder(l.source);
+          applyImage(l, await decodeBlob(blob));
+          count++;
+        } catch (_) { l.missing = true; }
       }
       renderAll();
       toast(`Reloaded ${count}/${model.layers.length} layer images.`);
     } catch (e) {
       toast(`Could not reload: ${e.message}`);
+    }
+  }
+
+  function renderServerCatalog(selected = activeServerProject) {
+    const projectSelect = $("server-project");
+    const assetSelect = $("server-asset");
+    projectSelect.textContent = "";
+    projectSelect.add(new Option(serverCatalog.projects.length ? "Choose project…" : "No projects yet", ""));
+    for (const name of serverCatalog.projects) projectSelect.add(new Option(name, name));
+    if (selected && serverCatalog.projects.includes(selected)) projectSelect.value = selected;
+    else projectSelect.value = "";
+
+    assetSelect.textContent = "";
+    if (!serverCatalog.images.length) assetSelect.add(new Option("No PNG images found", ""));
+    for (const name of serverCatalog.images) assetSelect.add(new Option(name, name));
+    $("server-project-label").hidden = false;
+    $("server-asset-picker").hidden = false;
+    $("choose-project-folder").hidden = true;
+    $("project-folder-name").textContent = `Assets: ${serverCatalog.images.length} images`;
+  }
+
+  async function loadServerProject(filename) {
+    if (!filename) return;
+    try {
+      const data = await (await serverRequest(`/api/projects/${encodeURIComponent(filename)}`)).json();
+      activeServerProject = filename;
+      await loadData(data);
+    } catch (e) {
+      toast(`Could not load ${filename}: ${e.message}`);
+    }
+  }
+
+  async function addServerAsset() {
+    const name = $("server-asset").value;
+    if (!name) return;
+    try {
+      const blob = await (await serverRequest(`/api/assets/${encodeURIComponent(name)}`)).blob();
+      pushUndo();
+      const layer = addLayerFromDecoded(name, await decodeBlob(blob));
+      ui.layer = model.layers.indexOf(layer);
+      ui.tileSel = null;
+      renderAll();
+    } catch (e) {
+      toast(`Could not add ${name}: ${e.message}`);
+    }
+  }
+
+  function newProject() {
+    $("new-project-name").value = "new_metasprite";
+    const source = $("new-project-source");
+    source.textContent = "";
+    source.add(new Option("Blank project", "blank"));
+    if (model.layers.length) source.add(new Option(`Current project: ${model.name}`, "current"));
+    const projects = serverMode ? serverCatalog.projects : folderProjects;
+    for (const project of projects) source.add(new Option(project, `project:${project}`));
+    $("new-project-dialog").showModal();
+    $("new-project-name").focus();
+    $("new-project-name").select();
+  }
+
+  async function createProject(rawName, source) {
+    const name = rawName.trim();
+    const filename = `${name.toLowerCase().replace(/[^a-z0-9_]/g, "_")}.metasprite.json`;
+    if (!name || /^_+\.metasprite\.json$/.test(filename)) {
+      toast("Enter a name containing at least one letter or number.");
+      return;
+    }
+    if (serverMode && serverCatalog.projects.some((project) => project.toLowerCase() === filename)) {
+      toast(`A project named ${filename} already exists.`);
+      return;
+    }
+    if (dirHandle) {
+      try {
+        await dirHandle.getFileHandle(filename);
+        toast(`A project named ${filename} already exists.`);
+        return;
+      } catch (e) {
+        if (e.name !== "NotFoundError") {
+          toast(`Could not check the project folder: ${e.message}`);
+          return;
+        }
+      }
+    }
+    let duplicate = null;
+    let fromFolder = false;
+    if (source === "current") duplicate = projectData(true);
+    else if (source.startsWith("project:")) {
+      const filename = source.slice("project:".length);
+      try {
+        if (serverMode) duplicate = await (await serverRequest(`/api/projects/${encodeURIComponent(filename)}`)).json();
+        else if (dirHandle) {
+          duplicate = JSON.parse(await (await readFromFolder(filename)).text());
+          fromFolder = true;
+        } else {
+          toast("Open the assets folder to duplicate a saved project.");
+          return;
+        }
+      } catch (e) {
+        toast(`Could not read the project to duplicate: ${e.message}`);
+        return;
+      }
+    }
+    stopPlay();
+    if (duplicate) {
+      try {
+        await loadData(duplicate, { fromFolder });
+      } catch (e) {
+        toast(`Could not duplicate project: ${e.message}`);
+        return;
+      }
+    } else {
+      model.name = name;
+      model.stage = { columns: 3, rows: 6 };
+      model.collision = { width: 18, height: 46 };
+      model.anchor = { x: 0, y: 0 };
+      model.hitboxAnchor = { x: 0, y: 0 };
+      model.layers = [];
+      model.frames = [newFrame("frame0")];
+      model.clips = [{ name: "idle", loop: true, pingpong: false, steps: [{ frame: 0, ticks: 8 }] }];
+    }
+    model.name = name;
+    activeServerProject = "";
+    if (serverMode) $("server-project").value = "";
+    $("new-project-dialog").close();
+    ui.layer = 0; ui.frame = 0; ui.clip = 0;
+    ui.selection.clear(); ui.tileSel = null;
+    undoStack.length = 0;
+    $("undo-button").disabled = true;
+    syncInputs();
+    renderAll();
+    toast(duplicate
+      ? `Started ${name} as a copy. Its layers use the same source images; save to create a separate project.`
+      : `Started ${name}. Add an image, place a tile, then save to create the project file.`);
+  }
+
+  async function startServerMode() {
+    if (location.protocol === "file:" || !["127.0.0.1", "localhost", "[::1]", "::1"].includes(location.hostname)) return;
+    try {
+      serverCatalog = await (await serverRequest("/api/catalog")).json();
+      serverMode = true;
+      renderServerCatalog();
+      const firstProject = serverCatalog.projects[0];
+      if (firstProject) {
+        $("server-project").value = firstProject;
+        await loadServerProject(firstProject);
+      }
+    } catch (e) {
+      toast(`Could not connect to the metasprite server: ${e.message}`);
     }
   }
 
@@ -1297,8 +1567,16 @@
     }
   });
   $("save-project").addEventListener("click", saveProject);
+  $("new-project").addEventListener("click", newProject);
+  $("new-project-cancel").addEventListener("click", () => $("new-project-dialog").close());
+  $("new-project-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    createProject($("new-project-name").value, $("new-project-source").value);
+  });
   $("add-layer").addEventListener("click", () => $("layer-files").click());
   $("layer-files").addEventListener("change", (e) => { addLayerFiles([...e.target.files]); e.target.value = ""; });
+  $("server-project").addEventListener("change", () => loadServerProject($("server-project").value));
+  $("server-add-asset").addEventListener("click", addServerAsset);
   $("asset-name").addEventListener("change", () => { pushUndo(); model.name = $("asset-name").value.trim() || "player"; renderAll(); });
   $("select-tool").addEventListener("click", () => setTool("select"));
   $("move-tool").addEventListener("click", () => setTool("move"));
@@ -1416,4 +1694,5 @@
   model.frames.push(newFrame("frame0"));
   renderAll();
   restoreHandle();
+  startServerMode();
 })();

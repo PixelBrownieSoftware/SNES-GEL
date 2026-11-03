@@ -15,6 +15,10 @@
     <div class="top-actions">
       <button id="choose-project-folder" class="button secondary" title="Pick your game's assets folder">Open assets folder</button>
       <span id="project-folder-name" class="folder-status">No folder selected</span>
+      <label id="server-project-label" class="server-select" hidden>Project
+        <select id="server-project" aria-label="Project"></select>
+      </label>
+      <button id="new-project" class="button secondary">New project</button>
       <button id="reload-art" class="button secondary" title="Re-read the layer PNGs from the folder">Reload art</button>
       <button id="load-project" class="button secondary">Load project</button>
       <input id="project-file" type="file" accept=".json,application/json" hidden>
@@ -32,6 +36,16 @@
         <button id="add-layer" class="button secondary">+ Layer PNG</button>
         <input id="layer-files" type="file" accept="image/png" multiple hidden>
       </div>
+      <div id="server-asset-picker" class="asset-picker" hidden>
+        <select id="server-asset" aria-label="Available image assets"></select>
+        <button id="server-add-asset" class="button secondary">Add image</button>
+      </div>
+      <section class="palette-viewer" aria-label="Selected image palette">
+        <h3 id="palette-title">Palette</h3>
+        <div id="palette-colors" class="palette-colors">
+          <p class="hint">Select a layer to view its indexed colors.</p>
+        </div>
+      </section>
       <label class="field">Asset name
         <input id="asset-name" value="player" maxlength="24" autocomplete="off">
       </label>
@@ -177,6 +191,23 @@
       </div>
     </aside>
   </main>
+
+  <dialog id="new-project-dialog" class="project-dialog">
+    <form id="new-project-form">
+      <h2>New metasprite</h2>
+      <label class="field" for="new-project-name">Project name
+        <input id="new-project-name" maxlength="64" required autocomplete="off">
+      </label>
+      <label class="field" for="new-project-source">Start from
+        <select id="new-project-source"></select>
+      </label>
+      <div class="toolbar">
+        <button id="new-project-cancel" class="button secondary" type="button">Cancel</button>
+        <button class="button primary" type="submit">Create</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
   <script src="metasprite-pack.js"></script>

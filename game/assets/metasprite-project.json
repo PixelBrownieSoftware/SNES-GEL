@@ -1,0 +1,7 @@
+{
+  "format": "gel-metasprite-project-v1",
+  "projects": [
+    "player.metasprite.json",
+    "spring.metasprite.json"
+  ]
+}

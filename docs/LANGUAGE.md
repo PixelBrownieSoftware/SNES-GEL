@@ -52,6 +52,13 @@ x++;  --x;
 ```
 
 Expressions: `+ - * /`, `<< >>`, `& | ^ ~`, `&& || !`, `== != < > <= >=`, unary `-`.
+
+`&`, `|`, `^`, and `~` are bitwise operators: they operate on the individual bits of integer
+values. For example, `x & 7` keeps only the lowest three bits of `x`, which is useful for finding
+its position within an 8-pixel tile. `&&`, `||`, and `!` are logical operators: they combine or
+invert true/false conditions. For example, `a & b` combines bits, while `a && b` is true only when
+both `a` and `b` are nonzero.
+
 Literals: decimal, `0x1F`, `'c'`, `1.5`, `"text"`.
 
 ## Enums

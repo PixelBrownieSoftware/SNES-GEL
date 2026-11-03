@@ -1,16 +1,30 @@
 GEL Metasprite Editor (layers + animation)
 
-Open index.html directly in a modern browser (Chrome/Edge for folder access).
-No server or packages needed.
+Windows: run start.bat to serve the editor locally and open it in your browser. The default assets
+folder is game/assets; pass another assets folder as an argument to start.bat to use a different
+project. The server reads and updates metasprite-project.json, which lists the separate
+<name>.metasprite.json files. It also discovers PNG images and converts BMP images to PNG beside
+the originals. RGB BMP conversion quantizes to 15 colors and reserves palette index 0 as
+transparent; existing alpha is preserved, but an opaque RGB BMP does not identify a transparent
+background, so its background stays opaque. Review quantized output if exact colors matter.
+
+Alternatively, open index.html directly in Chrome/Edge and use the browser folder picker. This
+mode does not provide the server's project catalog or automatic BMP conversion.
 
 WORKFLOW
-1. Open assets folder: pick your game's assets/ folder. If it holds a
-   <name>.metasprite.json it loads; otherwise click "+ Layer PNG" and add your
-   body-part PNGs (head.png, hair.png, torso.png, legs.png, arms.png ...).
-   Every PNG must be an indexed (palette) image, colour 0 = transparent.
+1. Use New project to start a blank metasprite or copy an existing project (including the current
+   project), enter its new name, and Save project to create a separate JSON file. A copy reuses the
+   original layer images, frames, and clips; edits to those shared source images affect both
+   projects. For a blank project, choose images from the asset list (or add PNG files), place at
+   least one visible tile, and save. With the
+   server, choose an existing project from the Project menu (the first listed project loads at
+   startup); the server keeps the project manifest updated.
+   In browser-folder mode, pick your game's assets/ folder; if it holds a
+   <name>.metasprite.json it loads. Every layer PNG should be an indexed (palette) image, colour 0
+   = transparent.
 2. Layers (left): back to front, last layer draws in front. Each layer has an
    OBJ palette slot (P0-P7). Different skin tones = same head PNG with another
-   palette, in another slot.
+   palette, in another slot. Select a layer to view its 16 indexed colors; index 0 is transparent.
 3. Pick tiles on the sheet (click, drag, or double-click a whole cell; set the
    cell size next to "Fill from selection"). Use "Fill from selection" to place
    a whole cell at once, or Stamp to place tiles by hand.

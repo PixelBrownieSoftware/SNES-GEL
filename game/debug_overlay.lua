@@ -6,11 +6,13 @@
 --   gel.bit("name", n)    bit n of a variable
 --   gel.has("name")       true if the variable exists in this build
 --   gel.text(x, y, str, color)
+--   gel.draw_slopes() draws the packed collision profiles over the visible level
 --   gel.fps               emulator frames per second (updates once a second)
 --   gel.logic_rate        game ticks per second the ROM actually processed (should match fps)
 -- Any dp/persist variable in game.gel (or the stdlib) can be read by name.
 
 return function(gel)
+    gel.draw_slopes()
     local lines = {
         string.format("FPS: %.0f  LOGIC: %.0f/s", gel.fps, gel.logic_rate),
         string.format("X: %d  Y: %d", gel.get("player_x"), gel.get("player_y")),
@@ -21,7 +23,7 @@ return function(gel)
         -- string.format("MODE: %d  ABILITY: %d  DASH: %d", gel.get("game_mode"),
         --     gel.get("player_ability"), gel.get("dash_frames")),
     }
-    -- for i, line in ipairs(lines) do
-    --     gel.text(145, 16 + (i - 1) * 9, line)
-    -- end
+    for i, line in ipairs(lines) do
+        gel.text(145, 16 + (i - 1) * 9, line)
+    end
 end

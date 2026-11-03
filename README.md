@@ -60,11 +60,14 @@ Release build: `python compiler/build.py game --release`
 
 ## Metasprite editor
 
-A browser-based editor for building multi-part sprites from layered PNGs (head, hair, torso, legs,
-arms...) and animating them. No install and no server: open `tools/metasprite-editor/index.html` in
-Chrome or Edge and pick your project's `assets/` folder. It reads and writes `<name>.metasprite.json`,
-which the build turns into tiles and animation data. Flip H / Flip V reuse tiles at no ROM cost, and
-the build deduplicates the rest. Usage is in [tools/metasprite-editor/README.txt](tools/metasprite-editor/README.txt).
+A browser-based editor for building multi-part sprites from layered images (head, hair, torso, legs,
+arms...) and animating them. On Windows, run `tools/metasprite-editor/start.bat` to start the local
+server and open the editor. It uses `game/assets/metasprite-project.json` to list the separate
+`<name>.metasprite.json` projects, and makes PNGs in the assets folder available as layers. BMPs are
+converted to indexed PNGs automatically. The editor also remains usable directly from `index.html`
+with its browser folder picker. Project files are compiled into tiles and animation data; Flip H /
+Flip V reuse tiles at no ROM cost, and the build deduplicates the rest. See
+[tools/metasprite-editor/README.txt](tools/metasprite-editor/README.txt) for usage.
 
 ## Repository layout
 

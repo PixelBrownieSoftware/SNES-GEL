@@ -1,87 +1,222 @@
 {
- "type": "tileset",
- "name": "terrain",
- "image": "terrain.png",
- "imagewidth": 64,
- "imageheight": 16,
- "tilewidth": 8,
- "tileheight": 8,
- "columns": 8,
- "tilecount": 16,
- "margin": 0,
- "spacing": 0,
- "tiles": [
-  {
-   "id": 1,
-   "properties": [
+  "type": "tileset",
+  "name": "terrain",
+  "image": "terrain.png",
+  "imagewidth": 48,
+  "imageheight": 32,
+  "tilewidth": 8,
+  "tileheight": 8,
+  "columns": 6,
+  "tilecount": 24,
+  "margin": 0,
+  "spacing": 0,
+  "tiles": [
     {
-     "name": "solid",
-     "type": "bool",
-     "value": true
-    }
-   ]
-  },
-  {
-   "id": 2,
-   "properties": [
+      "id": 1,
+      "properties": [
+        {
+          "name": "solid",
+          "type": "bool",
+          "value": true
+        }
+      ]
+    },
     {
-     "name": "solid",
-     "type": "bool",
-     "value": true
-    }
-   ]
-  },
-  {
-   "id": 3,
-   "properties": [
+      "id": 2,
+      "properties": [
+        {
+          "name": "solid",
+          "type": "bool",
+          "value": true
+        }
+      ]
+    },
     {
-     "name": "solid",
-     "type": "bool",
-     "value": true
-    }
-   ]
-  },
-  {
-   "id": 4,
-   "properties": [
+      "id": 3,
+      "properties": [
+        {
+          "name": "solid",
+          "type": "bool",
+          "value": true
+        }
+      ]
+    },
     {
-     "name": "solid",
-     "type": "bool",
-     "value": true
-    }
-   ]
-  },
-  {
-   "id": 5,
-   "properties": [
+      "id": 6,
+      "properties": [
+        {
+          "name": "solid",
+          "type": "bool",
+          "value": true
+        }
+      ]
+    },
     {
-     "name": "solid",
-     "type": "bool",
-     "value": true
-    }
-   ]
-  },
-  {
-   "id": 6,
-   "properties": [
+      "id": 7,
+      "properties": [
+        {
+          "name": "slope_start",
+          "type": "int",
+          "value": 8
+        },
+        {
+          "name": "slope_end",
+          "type": "int",
+          "value": 0
+        }
+      ]
+    },
     {
-     "name": "solid",
-     "type": "bool",
-     "value": true
-    }
-   ]
-  },
-  {
-   "id": 7,
-   "properties": [
+      "id": 8,
+      "properties": [
+        {
+          "name": "slope_start",
+          "type": "int",
+          "value": 6
+        },
+        {
+          "name": "slope_end",
+          "type": "int",
+          "value": 2
+        }
+      ]
+    },
     {
-     "name": "solid",
-     "type": "bool",
-     "value": true
+      "id": 9,
+      "properties": [
+        {
+          "name": "slope_start",
+          "type": "int",
+          "value": 2
+        },
+        {
+          "name": "slope_end",
+          "type": "int",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "properties": [
+        {
+          "name": "slope_start",
+          "type": "int",
+          "value": 6
+        },
+        {
+          "name": "slope_end",
+          "type": "int",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "properties": [
+        {
+          "name": "slope_start",
+          "type": "float",
+          "value": 8
+        },
+        {
+          "name": "slope_end",
+          "type": "float",
+          "value": 5.375
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "properties": [
+        {
+          "name": "slope_start",
+          "type": "float",
+          "value": 5.375
+        },
+        {
+          "name": "slope_end",
+          "type": "float",
+          "value": 2.625
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "properties": [
+        {
+          "name": "slope_start",
+          "type": "float",
+          "value": 2.625
+        },
+        {
+          "name": "slope_end",
+          "type": "int",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "properties": [
+        {
+          "name": "slope_start",
+          "type": "int",
+          "value": 8
+        },
+        {
+          "name": "slope_end",
+          "type": "int",
+          "value": 6
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "properties": [
+        {
+          "name": "slope_start",
+          "type": "int",
+          "value": 6
+        },
+        {
+          "name": "slope_end",
+          "type": "int",
+          "value": 4
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "properties": [
+        {
+          "name": "slope_start",
+          "type": "int",
+          "value": 4
+        },
+        {
+          "name": "slope_end",
+          "type": "int",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "properties": [
+        {
+          "name": "slope_start",
+          "type": "int",
+          "value": 2
+        },
+        {
+          "name": "slope_end",
+          "type": "int",
+          "value": 0
+        }
+      ]
     }
-   ]
-  }
- ],
- "version": "1.10",
- "tiledversion": "1.10.2"
+  ],
+  "version": "1.10",
+  "tiledversion": "1.10.1"
 }

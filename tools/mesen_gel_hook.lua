@@ -15,6 +15,8 @@ local CAM_X_ADDR    = @CAM_X_ADDR@
 local CAM_Y_ADDR    = @CAM_Y_ADDR@
 local COLLISION_WIDTH  = @COLLISION_WIDTH@
 local COLLISION_HEIGHT = @COLLISION_HEIGHT@
+local LEVEL_WIDTH  = @LEVEL_WIDTH@
+local LEVEL_HEIGHT = @LEVEL_HEIGHT@
 local collision_bounds_enabled = false
 local collision_toggle_was_down = false
 local collision_config_logged = false
@@ -71,6 +73,43 @@ local function read_word(address, wram)
     return emu.read(address, wram) | (emu.read(address + 1, wram) << 8)
 end
 
+local SLOPE_FLAG = 0x80
+local TILE_SIZE = 8
+local SLOPE_DRAW_RADIUS = 64
+local MODE_PLATFORMER = 0
+local slope_collision = nil
+local slope_table = nil
+local slope_collision_logged = false
+
+local function load_slope_collision()
+    slope_collision = nil
+    slope_table = nil
+    if not LEVEL_WIDTH or not LEVEL_HEIGHT then return end
+    local f = io.open(PROJECT_DIR .. "level_coll.bin", "rb")
+    local t = io.open(PROJECT_DIR .. "level_slopes.bin", "rb")
+    if not f or not t then
+        if f then f:close() end
+        if t then t:close() end
+        if not slope_collision_logged then
+            emu.log("[GEL Debug] Cannot open level_coll.bin/level_slopes.bin for slope visualization.")
+            slope_collision_logged = true
+        end
+        return
+    end
+    local data = f:read("*a")
+    local table_data = t:read("*a")
+    f:close()
+    t:close()
+    if #data < LEVEL_WIDTH * LEVEL_HEIGHT then
+        emu.log("[GEL Debug] level_coll.bin is smaller than the generated level dimensions.")
+        return
+    end
+    slope_collision = data
+    slope_table = table_data
+end
+
+load_slope_collision()
+
 -- ---------------------------------------------------------------------------
 -- Debug overlay: game/debug_overlay.lua is user-editable and reloaded on change.
 -- ---------------------------------------------------------------------------
@@ -110,6 +149,44 @@ function gel.hex(name)
 end
 function gel.text(x, y, str, color)
     emu.drawString(x, y, str, color or 0xFFFFFF, 0x90000000)
+end
+function gel.draw_slopes()
+    if not collision_bounds_enabled or not slope_collision or not slope_table or
+       not gel.has("cam_x") or not gel.has("cam_y") or
+       not gel.has("player_x") or not gel.has("player_y") or
+       not gel.has("game_mode") or gel.raw("game_mode") ~= MODE_PLATFORMER then
+        return
+    end
+    local cam_x, cam_y = gel.raw("cam_x"), gel.raw("cam_y")
+    local player_x, player_y = gel.raw("player_x"), gel.raw("player_y")
+    local first_x = math.max(0, math.floor(cam_x / TILE_SIZE),
+        math.floor((player_x - SLOPE_DRAW_RADIUS) / TILE_SIZE))
+    local first_y = math.max(0, math.floor(cam_y / TILE_SIZE) - 1,
+        math.floor((player_y - SLOPE_DRAW_RADIUS) / TILE_SIZE))
+    local last_x = math.min(LEVEL_WIDTH - 1, math.floor((cam_x + 255) / TILE_SIZE),
+        math.floor((player_x + COLLISION_WIDTH + SLOPE_DRAW_RADIUS) / TILE_SIZE))
+    local last_y = math.min(LEVEL_HEIGHT - 1, math.floor((cam_y + 223) / TILE_SIZE) + 1,
+        math.floor((player_y + COLLISION_HEIGHT + SLOPE_DRAW_RADIUS) / TILE_SIZE))
+
+    for tile_y = first_y, last_y do
+        for tile_x = first_x, last_x do
+            local index = tile_y * LEVEL_WIDTH + tile_x + 1
+            local code = slope_collision:byte(index)
+            if code and (code & SLOPE_FLAG) ~= 0 then
+                local entry = (code & 0x7F) * 8
+                local color = 0xFF4040
+                local first_surface = slope_table:byte(entry + 1) or 8
+                local last_surface = slope_table:byte(entry + 8) or 8
+                if last_surface < first_surface then color = 0x4080FF end
+                for pixel_x = 0, TILE_SIZE - 1 do
+                    local surface_y = (slope_table:byte(entry + pixel_x + 1) or 8) - 8
+                    local screen_x = tile_x * TILE_SIZE + pixel_x - cam_x
+                    local screen_y = tile_y * TILE_SIZE + surface_y - cam_y + 7
+                    emu.drawRectangle(screen_x, screen_y, 1, 1, color, true, 1)
+                end
+            end
+        end
+    end
 end
 
 -- Frame-rate counters, refreshed once per wall-clock second.
@@ -196,6 +273,7 @@ function on_end_frame()
         last_modified = ts
         local info = (name and name ~= "") and (" (" .. name .. ")") or ""
         if reload_rom() then
+            load_slope_collision()
             emu.log("[GEL Hot-Reload] ROM reloaded" .. info)
         end
     end
