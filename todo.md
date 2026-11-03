@@ -13,6 +13,7 @@ A guided, block-based way to write GEL that looks like GEL code but can't have s
 - Scope note: this guarantees no syntax errors (and can prevent type errors), not logic errors or hardware limits. Compiling to GEL means no SNES VM is needed.
 
 ## Metasprite Editor
+With a metasprite, with each layer, there may be an option to make it so that it can use a different image i.e. the front arm layer using a sleeved as well as a sleveless image. They can be toggled.
 - [x] Use a local Python server and Windows launcher so the editor opens at a defined assets folder without repeatedly choosing files.
 - [x] Keep each metasprite in its own JSON and list projects in `metasprite-project.json`.
 - [x] Discover PNG assets in the folder and make them assignable as layers; convert BMPs to PNG automatically.
