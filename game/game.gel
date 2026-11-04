@@ -26,6 +26,19 @@
 #define SPRITE_PALETTE_ADDR PLAYER_MS_PAL0
 #define SPRITE_TILES_ADDR   PLAYER_MS_TILES
 
+// Table for metasprite headers, used for alignment and frame data.
+// Pinned at $1000 (WRAM, just after TextMap's $0800-$0FFF) so it can't collide with the
+// auto-placed tables that start at $0600.
+struct_table MetaspriteHeader[2] @ 0x1000 {
+    u16 frame_table;   // Pointer to MS frame definitions
+    u16 anim_table;   // Pointer to MS animation definitions
+    u16 off_x;         // Normal X alignment offset table
+    u16 off_mirror_x;  // Mirrored X alignment offset table
+    u16 off_y;         // Y alignment offset table
+    u8  tile_base;     // First VRAM tile of this metasprite's tiles
+    u8  attr;          // Base OAM attribute bits (priority); palettes come from the frame data
+};
+
 enum PlayerState {
     STATE_IDLE,
     STATE_MOVING,
@@ -61,6 +74,7 @@ enum GameMode {
 // mode_flags bit 0: on_ground; 1: pounding; 2: direction (0 = right, 1 = left); 3: climbing.
 #define mode_flags    Entities[0].flags
 #define dash_frames   Entities[0].dash
+#define dash_frames   Entities[0].dash
 f16 player_air_res = 1.0;
 persist u8  game_mode    = MODE_PLATFORMER;
 persist u16 cam_x        = 0;
@@ -76,6 +90,10 @@ u8 player_footstep_sfx4 = 0;
 u8 player_footstep_sfx5 = 0;
 u8 footstep_timer = 0;
 u8 footstep_index = 0;
+u16 player_test_anim_files = SPRITE_TILES_ADDR;
+u16 player_curr_anim = 0;
+u16 player_anim_addr = 0;
+i8 dummy_number =0;
 
 // ---------------- Level objects (from the Tiled object layer) ----------------
 // ---------------- Level data (own ROM bank) and map streaming ----------------
@@ -510,31 +528,43 @@ fn update_anim(u16 e) {
 }
 
 // Per-frame draw offset (16-bit) from a packer table: NORMAL_X, MIRROR_X or Y.
-fn player_ms_off(u16 table, u8 frame) {
-    u16 p = table + frame + frame;
-    u16 lo = peek8(p);
-    p++;
-    u16 hi = peek8(p);
-    return lo | (hi << 8);
-}
+//We're gonna need to refer to more than just the player
+//And refer to each layer's offset seperately
+// fn player_ms_off(u16 table, u8 frame) {
+//     u16 p = table + frame + frame;
+//     u16 lo = peek8(p);
+//     p++;
+//     u16 hi = peek8(p);
+//     return lo | (hi << 8);
+// }
 
 fn render_player() {
-    u8 frame = std_anim_frame(PLAYER_MS_ANIMS, Entities[0].clip, Entities[0].step);
+    dummy_number = -2;
+    if (Entities[0].type != OBJ_PLAYERSTART) { return; }
+    //PLAYER_MS_ANIMS
+    u16 animaddr = Entities[0].animaddr;
+    u16 anim_table = MetaspriteHeader[animaddr].anim_table;
+    u16 frame_table = MetaspriteHeader[animaddr].frame_table;
+    u16 off_x = MetaspriteHeader[animaddr].off_x;
+    u16 off_y = MetaspriteHeader[animaddr].off_y;
+    u16 off_mirror_x = MetaspriteHeader[animaddr].off_mirror_x;
+    u8 frame = std_anim_frame(anim_table, Entities[0].clip, Entities[0].step);
     // The artwork faces left, so facing right (flag 0) is the flipped case.
-    u8 attr = OAM_PRIO3 | OAM_HFLIP;
-    i16 draw_x = player_x - player_ms_off(PLAYER_MS_MIRROR_X, frame);
+    u8 attr = MetaspriteHeader[animaddr].attr | OAM_HFLIP;
+    i16 draw_x = player_x - ms_table_off(off_mirror_x, frame);
     if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
         bit_clear(attr, OAMB_HFLIP);
-        draw_x = player_x - player_ms_off(PLAYER_MS_NORMAL_X, frame);
+        draw_x = player_x - ms_table_off(off_x, frame);
     }
     std_draw_frame(
-        PLAYER_MS_FRAMES,
+        frame_table,
         frame,
         draw_x - cam_x,
-        player_y - player_ms_off(PLAYER_MS_Y, frame) - cam_y,
+        player_y - ms_table_off(off_y, frame) - cam_y,
         attr,
-        0
+        MetaspriteHeader[animaddr].tile_base
     );
+    player_curr_anim = Entities[0].step;
 }
 
 // The HUD text only changes with the ability, so it is redrawn then (255 forces the first draw).
@@ -594,8 +624,9 @@ fn game_tick() {
     }
     std_sound_update();
     // draw_bullets();
-    render_player();
-    draw_entities();
+    // render_player();
+    // draw_entities();
+    draw_entites();
     render_ability_hud();
     std_oam_end();
 }
@@ -632,6 +663,26 @@ fn init_game() {
     std_text_init(FONT_PALETTE, FONT_TILES, FONT_BYTE_LEN);
     std_level_setup(TERRAIN_PALETTE, TERRAIN_TILES, TERRAIN_BYTE_LEN, LEVEL_SC_SIZE);
 
+    // Load metasprite headers for player and spring
+    // Quite a crude implementation, but we'll have this for now.
+
+    MetaspriteHeader.create();
+    MetaspriteHeader[0].frame_table = PLAYER_MS_FRAMES;
+    MetaspriteHeader[0].anim_table = PLAYER_MS_ANIMS;
+    MetaspriteHeader[0].off_x = PLAYER_MS_NORMAL_X;
+    MetaspriteHeader[0].off_mirror_x = PLAYER_MS_MIRROR_X;
+    MetaspriteHeader[0].off_y = PLAYER_MS_Y;
+    MetaspriteHeader[0].tile_base = 0;
+    MetaspriteHeader[0].attr = OAM_PRIO3;
+
+    MetaspriteHeader.create();
+    MetaspriteHeader[1].frame_table = SPRING_MS_FRAMES;
+    MetaspriteHeader[1].anim_table = SPRING_MS_ANIMS;
+    MetaspriteHeader[1].off_x = SPRING_MS_NORMAL_X;
+    MetaspriteHeader[1].off_mirror_x = SPRING_MS_MIRROR_X;
+    MetaspriteHeader[1].off_y = SPRING_MS_Y;
+    MetaspriteHeader[1].tile_base = BOUNCE_TILE;
+    MetaspriteHeader[1].attr = BOUNCE_ATTR;
     // Sky-blue backdrop (colour 0 shows wherever no layer draws).
     CGADD  = 0;
     CGDATA = 0x8A;

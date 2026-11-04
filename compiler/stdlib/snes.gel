@@ -164,8 +164,11 @@ static fn std_oam_end() {
     oam_prev = oam_cursor;
 }
 
-static fn std_draw_sprite(u8 screen_x, u8 screen_y, u8 tile_id, u8 flags) {
+// Positions are signed so off-screen sprites are skipped instead of wrapping to the other
+// side (OAM x/y are 8-bit; the X bit 8 is never set).
+static fn std_draw_sprite(i16 screen_x, i16 screen_y, u8 tile_id, u8 flags) {
     u8 slot = oam_cursor;
+    if (screen_x < 0 || screen_x > 255 || screen_y < 0 || screen_y > 223) { return; }
     if (slot < 128) {
         ShadowOAM[slot].x     = screen_x;
         ShadowOAM[slot].y     = screen_y;
@@ -177,6 +180,8 @@ static fn std_draw_sprite(u8 screen_x, u8 screen_y, u8 tile_id, u8 flags) {
 
 // Draws tile_count consecutive 8x8 tiles (starting at tile 0), tiles_wide per row.
 // Setting the H-flip bit (0x40) in base_attr also mirrors the column order.
+//TODO: We may need to add support for variations with metasprites
+//It will be a function that calls this one, which will override the things that are different
 static fn std_draw_metasprite(u8 base_x, u8 base_y, u8 tiles_wide, u8 tile_count, u8 base_attr) {
     u8 i = 0;
     u8 col = 0;
@@ -200,7 +205,7 @@ static fn std_draw_metasprite(u8 base_x, u8 base_y, u8 tiles_wide, u8 tile_count
 // Draws one frame of a packed layered metasprite (NAME_MS_FRAMES from the asset packer).
 // `attr` carries only priority and H/V flip bits (palettes come from the frame data);
 // H-flip mirrors the whole frame. `tile_base` is the first VRAM tile of NAME_MS_TILES.
-static fn std_draw_frame(u16 frames, u8 frame, u8 x, u8 y, u8 attr, u8 tile_base) {
+static fn std_draw_frame(u16 frames, u8 frame, i16 x, i16 y, u8 attr, u8 tile_base) {
     u8 wt = peek8(frames);
     u16 p = frames + 1 + frame + frame;
     u16 lo = peek8(p);

@@ -10,7 +10,10 @@
 // Pickups reuse the bullet tile (VRAM tile right after the player's tiles, PLAYER_MS_TILE_COUNT)
 // and OBJ palette 1 (attribute 0x32).
 
-struct_table Entities[16] {
+
+
+
+struct_table Entities[10] {
     u8  type;    // OBJ_* constant
     u16 x;       // top-left, world pixels
     u16 y;
@@ -20,6 +23,7 @@ struct_table Entities[16] {
     f16 vy;
     i16 subx;    // sub-pixel remainders
     i16 suby;
+    u16 animaddr;
     u8  state;     // player_state: STATE_*
     u8  flags;     // mode flags, see PlayerModeFlags
     u8  dash;      // dash frames left
@@ -73,9 +77,17 @@ fn spawn_entity(u8 type, u16 ex, u16 ey, u8 param) {
         Entities[slot].timer  = 0;
         Entities[slot].w      = ENT_SIZE;
         Entities[slot].h      = ENT_SIZE;
-        if (type == OBJ_BOUNCER) {
-            Entities[slot].w = BOUNCE_W;
-            Entities[slot].h = BOUNCE_H;
+        switch (type) {
+            case OBJ_BOUNCER:
+                Entities[slot].animaddr = 1;
+                Entities[slot].w = BOUNCE_W;
+                Entities[slot].h = BOUNCE_H;
+                break;
+            case OBJ_PLAYERSTART:
+                Entities[slot].animaddr = 0;
+                Entities[slot].w = HB_W;
+                Entities[slot].h = HB_H;
+                break;
         }
     }
 }
@@ -101,6 +113,7 @@ fn spawn_level_objects() {
     }
 }
 
+//Todo: This function needs to redone into a generic touch function
 // Box overlap between the player and entity e, using each one's own hitbox.
 fn player_touches(u16 e) {
     if (Entities[e].x >= player_x + Entities[0].w) { return 0; }
@@ -177,6 +190,7 @@ fn update_entities() {
     }
 }
 
+//This function needs to go. It needs to be a generic "draw metasprite"
 fn draw_bouncer(i16 sx, i16 sy, u8 anim) {
     u8 frame = 0;
     if (anim > 0) {
@@ -184,25 +198,93 @@ fn draw_bouncer(i16 sx, i16 sy, u8 anim) {
         if (anim > 4) { frame = 2; }
         if (anim > 8) { frame = 1; }
     }
-    std_draw_frame(SPRING_MS_FRAMES, frame, sx, sy - SPRING_MS_OFF_Y, BOUNCE_ATTR, BOUNCE_TILE);
+    std_draw_frame(
+        MetaspriteHeader[1].frame_table,
+        frame,
+        sx,
+        sy - SPRING_MS_OFF_Y,
+        MetaspriteHeader[1].attr,
+        MetaspriteHeader[1].tile_base
+    );
 }
-// Runs once per frame. Entities off screen are skipped (OAM x/y are 8-bit).
-fn draw_entities() {
+
+fn ms_table_off(u16 table, u8 frame) {
+    u16 p = table + (frame << 1); // Equivalent to frame + frame
+    //Return lowbyte | highbyte
+    //Basically-> | 0000 0000 | 0000 0000
+    return peek8(p) | (peek8(p + 1) << 8);
+}
+
+#define GEM_ATTR        0x32    // OBJ palette 1, priority 3
+#define SCREEN_W        266
+#define SCREEN_H        224
+#define DRAW_MARGIN     32      // entities this far off screen are still drawn (largest metasprite)
+
+fn draw_entites(){
     Entities.for_each(e) {
         i16 sx = Entities[e].x - cam_x;
         i16 sy = Entities[e].y - cam_y;
-        if (sx >= 0) {
-            if (sx <= 232) {
-                if (sy >= 32) {
-                    if (sy <= 216) {
-                        if (Entities[e].type == OBJ_BOUNCER) {
-                            draw_bouncer(sx, sy, Entities[e].anim);
-                        } else if (Entities[e].type == OBJ_GEM) {
-                            std_draw_sprite(sx, sy, PLAYER_MS_TILE_COUNT, 0x32);
-                        }
+        if (sx >= -DRAW_MARGIN && sx <= SCREEN_W && sy >= -DRAW_MARGIN && sy <= SCREEN_H) {
+            
+            // Get current metasprite frame ID for this entity
+            i16 frame_id = Entities[e].anim;
+            
+            // Draw the metasprite to OAM buffer
+            // (x, y, metasprite_frame_index, attributes/palette)
+            switch (Entities[e].type) {
+                case OBJ_BOUNCER:
+                    draw_bouncer(sx, sy, Entities[e].anim);
+                    break;
+                case OBJ_GEM:
+                    std_draw_sprite(sx, sy, PLAYER_MS_TILE_COUNT, GEM_ATTR);
+                    break;
+                case OBJ_PLAYERSTART:
+                    u16 animaddr = Entities[e].animaddr;
+                    u16 anim_table = MetaspriteHeader[animaddr].anim_table;
+                    u16 frame_table = MetaspriteHeader[animaddr].frame_table;
+                    u16 off_x = MetaspriteHeader[animaddr].off_x;
+                    u16 off_y = MetaspriteHeader[animaddr].off_y;
+                    u16 off_mirror_x = MetaspriteHeader[animaddr].off_mirror_x;
+                    u8 frame =                     std_anim_frame(anim_table, Entities[e].clip, Entities[e].step);
+                    // The artwork faces left, so facing right (flag 0) is the flipped case.
+                    u8 attr = MetaspriteHeader[animaddr].attr | OAM_HFLIP;
+                                        i16 draw_x = Entities[e].x - ms_table_off(off_mirror_x, frame);
+                                        if (bit_test(Entities[e].flags, MODE_FLAG_DIRECTION)) {
+                        bit_clear(attr, OAMB_HFLIP);
+                                            draw_x = Entities[e].x - ms_table_off(off_x, frame);
                     }
-                }
+                    std_draw_frame(
+                        frame_table,
+                        frame,
+                        draw_x - cam_x,
+                                            Entities[e].y - ms_table_off(off_y, frame) - cam_y,
+                        attr,
+                        MetaspriteHeader[animaddr].tile_base
+                    );
+                    break;
             }
         }
+
     }
 }
+
+// Runs once per frame. Entities off screen are skipped (OAM x/y are 8-bit).
+// fn draw_entities() {
+//     Entities.for_each(e) {
+//         i16 sx = Entities[e].x - cam_x;
+//         i16 sy = Entities[e].y - cam_y;
+//         if (sx >= 0) {
+//             if (sx <= 232) {
+//                 if (sy >= 32) {
+//                     if (sy <= 216) {
+//                         if (Entities[e].type == OBJ_BOUNCER) {
+//                             draw_bouncer(sx, sy, Entities[e].anim);
+//                         } else if (Entities[e].type == OBJ_GEM) {
+//                             std_draw_sprite(sx, sy, PLAYER_MS_TILE_COUNT, 0x32);
+//                         }
+//                     }
+//                 }
+//             }
+//         }
+//     }
+// }

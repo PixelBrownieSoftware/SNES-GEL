@@ -26,4 +26,7 @@ return function(gel)
     for i, line in ipairs(lines) do
         gel.text(145, 16 + (i - 1) * 9, line)
     end
+    gel.text(0, 16 + (1) * 9, gel.hex("player_test_anim_files"))
+    gel.text(0, 16 + (2) * 9, gel.get("player_curr_anim"))
+    gel.text(0, 16 + (3) * 9, gel.hex("player_anim_addr"))
 end

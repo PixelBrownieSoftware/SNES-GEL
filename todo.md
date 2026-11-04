@@ -6,6 +6,8 @@ You can also ask me: "add to todo: <task>".
 
 ## Visual GEL language (idea)
 A guided, block-based way to write GEL that looks like GEL code but can't have syntax errors. Think of it as an inverse parser: instead of the programmer writing text and the parser rejecting mistakes, the editor tracks what is valid at each point and only offers that.
+There will also be a way of knowing where in memory the struct tables will go.
+
 - [ ] Blocks are laid out top to bottom, like the lines of a GEL function. A plus icon at the bottom of a block list opens a menu of only the blocks that are valid there (statements, or expressions that fit the expected type). Nested blocks (if, while, for_each) have their own plus.
 - [ ] Generate the menu from the real grammar and type rules (`snes_gel.lark` and the compiler's type table), so the editor and the compiler can't disagree. For example, an f16 value times an integer is not offered when the compiler doesn't support it.
 - [ ] Emit normal `.gel` text, and load existing `.gel` files back into blocks by parsing them, so users can switch between text and blocks and learn the language from the blocks.
@@ -14,6 +16,11 @@ A guided, block-based way to write GEL that looks like GEL code but can't have s
 
 ## Metasprite Editor
 With a metasprite, with each layer, there may be an option to make it so that it can use a different image i.e. the front arm layer using a sleeved as well as a sleveless image. They can be toggled.
+Also make it so that with each frames layers can be be rearranged or hidden i.e. hair behind a character's head which is made invisible if it's not seen.
+Make it so that each layer has its own anchor (which can unlock a lot of other possiblities). With the layer based anchor, you will be able to see it in the editor. You cannot remove or add a layer. You can shift them. You cannot change the quantity of frames.
+I am thinking that what this saves in assets.asm is the base sprite, plus alterations. For example if I do lady 2 on player's metasprite, it will have instructions for changing the hair on these frames which state so. Or change position of this arms. It's pretty much: [Original] +  [Overwrites]
+I'll call this feature Metasprite remix/overwiting (remix sounds cooler).
+
 - [x] Use a local Python server and Windows launcher so the editor opens at a defined assets folder without repeatedly choosing files.
 - [x] Keep each metasprite in its own JSON and list projects in `metasprite-project.json`.
 - [x] Discover PNG assets in the folder and make them assignable as layers; convert BMPs to PNG automatically.
