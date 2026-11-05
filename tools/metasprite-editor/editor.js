@@ -35,6 +35,7 @@
   let serverCatalog = null;
   let folderProjects = [];
   let activeServerProject = "";
+  let activeProjectFilename = null;
   let toastTimer;
   let play = null;
 
@@ -61,6 +62,8 @@
   const curLayer = () => model.layers[ui.layer] || null;
   const curFrame = () => model.frames[ui.frame] || null;
   const curParts = () => (curFrame() && curFrame().layers[ui.layer]) || [];
+  const frameOrder = (f) => Pack.layerOrder(f, model.layers.length);
+  const layerOff = (f, li) => (f ? Pack.layerOffset(f, li) : { x: 0, y: 0 });
 
   function newFrame(name) {
     return { name, layers: model.layers.map(() => []) };
@@ -244,13 +247,16 @@
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.imageSmoothingEnabled = false;
-    model.layers.forEach((layer, li) => {
-      if (!layer.visible || !layer.canvas) return;
+    for (const li of frameOrder(frame)) {
+      const layer = model.layers[li];
+      if (!layer.visible || !layer.canvas) continue;
+      const lo = layerOff(frame, li);
       for (const p of frame.layers[li] || []) {
-        const x = (mirrored ? 2 * fa.x - p.x - TS : p.x) + sx;
-        drawTile(ctx, layer, p, (ox + x) * zoom, (oy + p.y + sy) * zoom, zoom, !!p.hflip !== mirrored, !!p.vflip);
+        const px = p.x + lo.x;
+        const x = (mirrored ? 2 * fa.x - px - TS : px) + sx;
+        drawTile(ctx, layer, p, (ox + x) * zoom, (oy + p.y + lo.y + sy) * zoom, zoom, !!p.hflip !== mirrored, !!p.vflip);
       }
-    });
+    }
     ctx.restore();
   }
 
@@ -312,6 +318,9 @@
     }
 
     const parts = curParts();
+    const lo = layerOff(curFrame(), ui.layer);
+    ctx.save();
+    ctx.translate(lo.x * z, lo.y * z);
     for (const i of ui.selection) {
       const p = parts[i];
       if (!p) continue;
@@ -347,11 +356,16 @@
       ctx.lineWidth = 1;
       ctx.strokeRect(x + .5, y + .5, Math.abs(b.x - a.x) * z, Math.abs(b.y - a.y) * z);
     }
+    ctx.restore();
 
     if (ui.showAnchor) {
       const fa = frameAnchor(ui.frame);
       cross(ctx, (ox + fa.x) * z, (oy + fa.y) * z, 7, ui.activeAnchor === "sprite" ? "#fff08a" : "#f5ca74", ui.activeAnchor === "sprite" ? 3 : 2);
       cross(ctx, (ox + model.hitboxAnchor.x) * z, (oy + model.hitboxAnchor.y) * z, 6, ui.activeAnchor === "hitbox" ? "#73e0c1" : "#ff7777", ui.activeAnchor === "hitbox" ? 3 : 2);
+      if (curLayer()) {
+        const lo = layerOff(curFrame(), ui.layer);
+        cross(ctx, (ox + lo.x) * z, (oy + lo.y) * z, 8, "#c084fc", ui.activeAnchor === "layer" ? 3 : 2);
+      }
     }
     ctx.strokeStyle = "#d9e3ed";
     ctx.lineWidth = 2;
@@ -503,6 +517,15 @@
       list.append(row);
     });
     const layer = curLayer();
+    const f = curFrame();
+    const lo = layerOff(f, ui.layer);
+    const pos = f && layer ? frameOrder(f).indexOf(ui.layer) : -1;
+    $("layer-anchor-x").value = lo.x;
+    $("layer-anchor-y").value = lo.y;
+    $("layer-order-info").textContent = pos >= 0 ? `depth ${pos + 1}/${model.layers.length}` : "";
+    $("layer-swap-back").disabled = pos <= 0;
+    $("layer-swap-front").disabled = pos < 0 || pos >= model.layers.length - 1;
+    for (const id of ["layer-anchor-x", "layer-anchor-y", "layer-frame-reset"]) $(id).disabled = !layer || !f;
     $("cell-w").value = layer ? layer.cell.w : model.stage.columns;
     $("cell-h").value = layer ? layer.cell.h : model.stage.rows;
     $("source-hint").textContent = layer
@@ -736,7 +759,16 @@
     pushUndo();
     const copy = { ...src, cell: { ...src.cell }, name: `${src.name} 2`, pending: false, blob: null };
     model.layers.splice(i, 0, copy);
-    model.frames.forEach((f) => f.layers.splice(i, 0, []));
+    model.frames.forEach((f) => {
+      f.layers.splice(i, 0, []);
+      if (f.layerAnchors) f.layerAnchors.splice(i, 0, null);
+      if (f.order) {
+        const order = f.order.map((k) => (k >= i ? k + 1 : k));
+        const at = order.indexOf(i + 1);
+        order.splice(at < 0 ? order.length : at, 0, i);
+        f.order = order;
+      }
+    });
     ui.layer = i;
     ui.selection.clear();
     ui.tileSel = null;
@@ -748,7 +780,11 @@
     if (!confirm(`Remove layer "${model.layers[i].name}" from every frame?`)) return;
     pushUndo();
     model.layers.splice(i, 1);
-    model.frames.forEach((f) => f.layers.splice(i, 1));
+    model.frames.forEach((f) => {
+      f.layers.splice(i, 1);
+      if (f.layerAnchors) f.layerAnchors.splice(i, 1);
+      if (f.order) f.order = f.order.filter((k) => k !== i).map((k) => (k > i ? k - 1 : k));
+    });
     ui.layer = clamp(ui.layer, 0, Math.max(0, model.layers.length - 1));
     ui.selection.clear();
     renderAll();
@@ -759,7 +795,11 @@
     if (j < 0 || j >= model.layers.length) return;
     pushUndo();
     [model.layers[i], model.layers[j]] = [model.layers[j], model.layers[i]];
-    model.frames.forEach((f) => { [f.layers[i], f.layers[j]] = [f.layers[j], f.layers[i]]; });
+    model.frames.forEach((f) => {
+      [f.layers[i], f.layers[j]] = [f.layers[j], f.layers[i]];
+      if (f.layerAnchors) [f.layerAnchors[i], f.layerAnchors[j]] = [f.layerAnchors[j], f.layerAnchors[i]];
+      if (f.order) f.order = f.order.map((k) => (k === i ? j : k === j ? i : k));
+    });
     ui.layer = j;
     ui.selection.clear();
     renderAll();
@@ -926,7 +966,8 @@
   function stagePoint(e) {
     const rect = stage.getBoundingClientRect();
     const { ox, oy } = stageGeometry();
-    return { x: (e.clientX - rect.left) / ui.scale - ox, y: (e.clientY - rect.top) / ui.scale - oy };
+    const lo = ui.tool === "anchor" ? { x: 0, y: 0 } : layerOff(curFrame(), ui.layer);
+    return { x: (e.clientX - rect.left) / ui.scale - ox - lo.x, y: (e.clientY - rect.top) / ui.scale - oy - lo.y };
   }
 
   const snap = (v) => Math.floor(v / TS) * TS;
@@ -952,12 +993,16 @@
 
   stage.addEventListener("pointerdown", (e) => {
     if (e.button !== 0 || !curFrame()) return;
+    if (ui.tool === "anchor" && ui.activeAnchor === "layer" && !curLayer()) {
+      toast("Select a layer before moving its anchor.");
+      return;
+    }
     stage.setPointerCapture(e.pointerId);
     const pt = stagePoint(e);
     if (ui.tool === "anchor") {
       pushUndo();
       ui.drag = { kind: "anchor" };
-      setAnchor(pt);
+      setAnchor(pt, e.shiftKey);
       return;
     }
     if (!curLayer()) return;
@@ -1006,7 +1051,22 @@
     return f.anchor;
   }
 
-  function setAnchor(pt) {
+  function setAnchor(pt, snapToTile = false) {
+    if (ui.activeAnchor === "layer") {
+      const f = curFrame();
+      if (!f || !curLayer()) return;
+      const snapOffset = (value) => {
+        const pixel = Math.round(value);
+        return snapToTile ? Math.round(pixel / TS) * TS : pixel;
+      };
+      const x = snapOffset(pt.x), y = snapOffset(pt.y);
+      f.layerAnchors = model.layers.map((_, li) => li === ui.layer ? { x, y } : layerOff(f, li));
+      renderLayers();
+      renderStage();
+      renderPreviews();
+      renderReport();
+      return;
+    }
     const target = anchorTarget();
     target.x = Math.round(pt.x);
     target.y = Math.round(pt.y);
@@ -1034,7 +1094,7 @@
       return;
     }
     if (d.kind === "erase") eraseAt(pt);
-    else if (d.kind === "anchor") setAnchor(pt);
+    else if (d.kind === "anchor") setAnchor(pt, e.shiftKey);
     else if (d.kind === "stamp") stampStep(pt);
     else if (d.kind === "marquee") {
       d.b = pt;
@@ -1149,6 +1209,16 @@
   }
 
   // ---- persistence -----------------------------------------------------------
+  // Per-frame layer anchors and draw order are only written when they differ from the defaults.
+  function frameLayerExtras(f) {
+    const extras = {};
+    const anchors = model.layers.map((_, li) => layerOff(f, li));
+    if (anchors.some((a) => a.x || a.y)) extras.layerAnchors = anchors;
+    const order = frameOrder(f);
+    if (order.some((li, i) => li !== i)) extras.order = order;
+    return extras;
+  }
+
   function projectData(embedSheets) {
     const data = {
       format: FORMAT,
@@ -1164,6 +1234,7 @@
       frames: model.frames.map((f) => ({
         name: f.name,
         ...(f.anchor ? { anchor: { x: f.anchor.x, y: f.anchor.y } } : {}),
+        ...frameLayerExtras(f),
         layers: f.layers.map((parts) => parts.map((p) => {
           const o = { sheetX: p.sheetX, sheetY: p.sheetY, x: p.x, y: p.y };
           if (p.hflip) o.hflip = true;
@@ -1224,6 +1295,7 @@
         });
         serverCatalog = await response.json();
         activeServerProject = filename;
+        activeProjectFilename = filename;
         renderServerCatalog(filename);
         toast(`Saved ${filename}. The bridge will rebuild the ROM.`);
       } catch (e) {
@@ -1247,9 +1319,91 @@
         if (l.pending && l.blob) { await write(l.source, l.blob); l.pending = false; }
       }
       await write(filename, JSON.stringify(projectData(false), null, 1));
+      activeProjectFilename = filename;
+      if (!folderProjects.includes(filename)) folderProjects.push(filename);
       toast(`Saved ${filename}. The bridge will rebuild the ROM.`);
     } catch (e) {
       toast(`Could not save: ${e.message}`);
+    }
+  }
+
+  async function renameProject(rawName) {
+    const name = rawName.trim();
+    const filename = `${name.toLowerCase().replace(/[^a-z0-9_]/g, "_")}.metasprite.json`;
+    if (!name || /^_+\.metasprite\.json$/.test(filename)) {
+      toast("Enter a name containing at least one letter or number.");
+      return;
+    }
+
+    const oldFilename = serverMode ? activeServerProject : activeProjectFilename;
+    try {
+      if (serverMode && oldFilename) {
+        const collision = serverCatalog.projects.some((project) =>
+          project.toLowerCase() === filename.toLowerCase() &&
+          project.toLowerCase() !== oldFilename.toLowerCase());
+        if (collision) throw new Error(`A project named ${filename} already exists.`);
+        for (const layer of model.layers) {
+          if (layer.pending && layer.blob) {
+            await serverRequest(`/api/assets/${encodeURIComponent(layer.source)}`, {
+              method: "POST",
+              headers: { "Content-Type": "image/png" },
+              body: layer.blob
+            });
+            layer.pending = false;
+          }
+        }
+        const project = projectData(false);
+        project.name = name;
+        const response = await serverRequest("/api/projects/rename", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ oldName: oldFilename, newName: filename, project })
+        });
+        serverCatalog = await response.json();
+        const savedName = serverCatalog.projects.find((projectName) => projectName.toLowerCase() === filename.toLowerCase()) || filename;
+        activeServerProject = savedName;
+        activeProjectFilename = savedName;
+        model.name = name;
+        renderServerCatalog(savedName);
+      } else if (dirHandle && oldFilename) {
+        await ensurePermission(dirHandle, "readwrite");
+        const targetName = oldFilename.toLowerCase() === filename.toLowerCase() ? oldFilename : filename;
+        if (targetName !== oldFilename) {
+          try {
+            await dirHandle.getFileHandle(targetName);
+            throw new Error(`A project named ${filename} already exists.`);
+          } catch (e) {
+            if (e.name !== "NotFoundError") throw e;
+          }
+        }
+        const write = async (fileName, content) => {
+          const writable = await (await dirHandle.getFileHandle(fileName, { create: true })).createWritable();
+          await writable.write(content);
+          await writable.close();
+        };
+        for (const layer of model.layers) {
+          if (layer.pending && layer.blob) {
+            await write(layer.source, layer.blob);
+            layer.pending = false;
+          }
+        }
+        const project = projectData(false);
+        project.name = name;
+        await write(targetName, JSON.stringify(project, null, 1));
+        if (targetName !== oldFilename) await dirHandle.removeEntry(oldFilename);
+        activeProjectFilename = targetName;
+        folderProjects = folderProjects.filter((projectName) => projectName !== oldFilename);
+        if (!folderProjects.includes(targetName)) folderProjects.push(targetName);
+        model.name = name;
+      } else {
+        model.name = name;
+      }
+      $("rename-project-dialog").close();
+      $("asset-name").value = model.name;
+      renderAll();
+      toast(oldFilename ? `Renamed project to ${filename}.` : `Renamed project to ${name}. Save project to persist the new name.`);
+    } catch (e) {
+      toast(`Could not rename project: ${e.message}`);
     }
   }
 
@@ -1257,7 +1411,19 @@
     return (await dirHandle.getFileHandle(name)).getFile();
   }
 
-  async function loadData(data, { sheets, fromFolder } = {}) {
+  function loadLayerExtras(f) {
+    const extras = {};
+    if (Array.isArray(f.layerAnchors)) {
+      extras.layerAnchors = model.layers.map((_, li) => {
+        const a = Pack.layerOffset(f, li);
+        return { x: Math.round(a.x), y: Math.round(a.y) };
+      });
+    }
+    if (Array.isArray(f.order)) extras.order = Pack.layerOrder(f, model.layers.length);
+    return extras;
+  }
+
+  async function loadData(data, { sheets, fromFolder, projectFilename = null, serverProject = false } = {}) {
     stopPlay();
     let converted = data;
     if (data.format === "gel-metasprite-v1") {
@@ -1301,6 +1467,7 @@
     model.frames = converted.frames.map((f, i) => ({
       name: f.name || `frame${i}`,
       ...(f.anchor ? { anchor: { x: int(f.anchor.x), y: int(f.anchor.y) } } : {}),
+      ...loadLayerExtras(f),
       layers: model.layers.map((_, li) => (f.layers[li] || []).map((p) => {
         const o = { sheetX: int(p.sheetX), sheetY: int(p.sheetY), x: int(p.x), y: int(p.y) };
         if (p.hflip) o.hflip = true;
@@ -1316,6 +1483,8 @@
     ui.layer = 0; ui.frame = 0; ui.clip = 0;
     ui.selection.clear(); ui.tileSel = null;
     ui.scale = clamp(Math.floor(420 / (model.stage.rows * TS)), 2, 12);
+    activeProjectFilename = projectFilename;
+    activeServerProject = serverProject ? projectFilename : "";
     undoStack.length = 0;
     $("undo-button").disabled = true;
     syncInputs();
@@ -1345,7 +1514,7 @@
         pick = prompt(`Open which project?\n${projects.join("\n")}`, projects[0]);
         if (!pick) return;
       }
-      await loadData(JSON.parse(await (await readFromFolder(pick)).text()), { fromFolder: true });
+      await loadData(JSON.parse(await (await readFromFolder(pick)).text()), { fromFolder: true, projectFilename: pick });
     } catch (e) {
       if (e.name !== "AbortError") toast(`Could not open folder: ${e.message}`);
     }
@@ -1394,8 +1563,7 @@
     if (!filename) return;
     try {
       const data = await (await serverRequest(`/api/projects/${encodeURIComponent(filename)}`)).json();
-      activeServerProject = filename;
-      await loadData(data);
+      await loadData(data, { projectFilename: filename, serverProject: true });
     } catch (e) {
       toast(`Could not load ${filename}: ${e.message}`);
     }
@@ -1491,6 +1659,7 @@
     }
     model.name = name;
     activeServerProject = "";
+    activeProjectFilename = null;
     if (serverMode) $("server-project").value = "";
     $("new-project-dialog").close();
     ui.layer = 0; ui.frame = 0; ui.clip = 0;
@@ -1567,6 +1736,17 @@
     }
   });
   $("save-project").addEventListener("click", saveProject);
+  $("rename-project").addEventListener("click", () => {
+    $("rename-project-name").value = model.name;
+    $("rename-project-dialog").showModal();
+    $("rename-project-name").focus();
+    $("rename-project-name").select();
+  });
+  $("rename-project-cancel").addEventListener("click", () => $("rename-project-dialog").close());
+  $("rename-project-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    renameProject($("rename-project-name").value);
+  });
   $("new-project").addEventListener("click", newProject);
   $("new-project-cancel").addEventListener("click", () => $("new-project-dialog").close());
   $("new-project-form").addEventListener("submit", (e) => {
@@ -1587,6 +1767,42 @@
     $("pack-toggle").classList.toggle("active", ui.packed);
     renderSheet();
   });
+  function swapLayerDepth(dir) {
+    const f = curFrame();
+    if (!f || !curLayer()) return;
+    const order = frameOrder(f);
+    const a = order.indexOf(ui.layer), b = a + dir;
+    if (b < 0 || b >= order.length) return;
+    pushUndo();
+    [order[a], order[b]] = [order[b], order[a]];
+    f.order = order;
+    renderAll();
+  }
+
+  function setLayerAnchor() {
+    const f = curFrame();
+    if (!f || !curLayer()) return;
+    const x = int($("layer-anchor-x").value), y = int($("layer-anchor-y").value);
+    const cur = layerOff(f, ui.layer);
+    if (x !== cur.x || y !== cur.y) {
+      pushUndo();
+      f.layerAnchors = model.layers.map((_, li) => (li === ui.layer ? { x, y } : layerOff(f, li)));
+    }
+    renderAll();
+  }
+
+  $("layer-swap-back").addEventListener("click", () => swapLayerDepth(-1));
+  $("layer-swap-front").addEventListener("click", () => swapLayerDepth(1));
+  $("layer-anchor-x").addEventListener("change", setLayerAnchor);
+  $("layer-anchor-y").addEventListener("change", setLayerAnchor);
+  $("layer-frame-reset").addEventListener("click", () => {
+    const f = curFrame();
+    if (!f || (!f.order && !f.layerAnchors)) return;
+    pushUndo();
+    delete f.order;
+    delete f.layerAnchors;
+    renderAll();
+  });
   $("frame-anchor-reset").addEventListener("click", () => {
     if (!curFrame().anchor) return;
     pushUndo();
@@ -1594,9 +1810,12 @@
     renderAll();
   });
   $("anchor-tool").addEventListener("click", () => {
-    if (ui.tool === "anchor") ui.activeAnchor = ui.activeAnchor === "sprite" ? "hitbox" : "sprite";
+    if (ui.tool === "anchor") {
+      ui.activeAnchor = ({ sprite: "hitbox", hitbox: "layer", layer: "sprite" })[ui.activeAnchor];
+    }
     setTool("anchor");
-    toast(`Click the canvas to place the ${ui.activeAnchor} anchor (click Anchors again to switch).`);
+    const target = ui.activeAnchor === "layer" ? `layer "${curLayer()?.name || "none"}" (purple)` : ui.activeAnchor;
+    toast(`Drag the ${target} anchor on the canvas. Hold Shift to snap to 8px. Click Anchors again to switch targets.`);
   });
   $("undo-button").addEventListener("click", undo);
   $("flip-h").addEventListener("click", () => flipSelection("h"));
@@ -1676,9 +1895,15 @@
       e.preventDefault();
       if (ui.tool === "anchor") {
         pushUndo();
-        const t = anchorTarget();
-        t.x += d[0]; t.y += d[1];
-        renderAll();
+        if (ui.activeAnchor === "layer") {
+          const current = layerOff(curFrame(), ui.layer);
+          const step = e.shiftKey ? TS : 1;
+          setAnchor({ x: current.x + d[0] * step, y: current.y + d[1] * step });
+        } else {
+          const t = anchorTarget();
+          t.x += d[0]; t.y += d[1];
+          renderAll();
+        }
       } else if (ui.selection.size) {
         pushUndo();
         const step = e.shiftKey ? 1 : TS;

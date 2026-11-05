@@ -173,6 +173,33 @@ class EditorHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
+            if path == "/api/projects/rename":
+                payload = json.loads(self.read_body(MAX_PROJECT_BYTES).decode("utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError("Expected a project rename request.")
+                old_name = payload.get("oldName")
+                new_name = payload.get("newName")
+                project = payload.get("project")
+                if old_name is not None and not safe_filename(old_name, ".metasprite.json"):
+                    raise ValueError("Invalid source filename.")
+                if not safe_filename(new_name, ".metasprite.json"):
+                    raise ValueError("Invalid destination filename.")
+                if not isinstance(project, dict) or project.get("format") != "gel-metasprite-v2":
+                    raise ValueError("Expected a gel-metasprite-v2 project.")
+
+                old_path = self.assets_dir / old_name if old_name else None
+                new_path = self.assets_dir / new_name
+                same_file = old_name is not None and old_name.casefold() == new_name.casefold()
+                if old_path and not old_path.is_file():
+                    raise ValueError("The project being renamed no longer exists.")
+                if new_path.exists() and not same_file:
+                    raise ValueError("A project with that filename already exists.")
+                target = old_path if same_file else new_path
+                atomic_write(target, (json.dumps(project, indent=1) + "\n").encode("utf-8"))
+                if old_path and not same_file:
+                    old_path.unlink()
+                self.send_json(200, project_catalog(self.assets_dir))
+                return
             if path.startswith("/api/projects/"):
                 name = self.api_name("/api/projects/", ".metasprite.json")
                 payload = self.read_body(MAX_PROJECT_BYTES)

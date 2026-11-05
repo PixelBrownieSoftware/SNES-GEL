@@ -29,6 +29,7 @@ enum Character {
 #define air_actions       Entities[0].air
 // Frames during which the wall can't be re-grabbed after a wall jump.
 #define wall_lock         Entities[0].wall
+u8 input_presses = 0;
 
 fn set_character(u8 c) {
     player_char = c;
@@ -60,6 +61,10 @@ fn update_dash() {
     }
 }
 
+//This would need to be put in the entites system
+//Instead of pad1_held booleans, we would have a general input system for entities.
+//i.e. horiz_input and vert_input to check if those buttons were pressed
+//This function will not know or care about the specific input source; it will just respond to the input state provided by the entity system.
 fn update_run() {
     if (bit_test(mode_flags, MODE_FLAG_POUNDING)) {
         player_vx = 0.0;

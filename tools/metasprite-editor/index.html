@@ -22,6 +22,7 @@
       <button id="reload-art" class="button secondary" title="Re-read the layer PNGs from the folder">Reload art</button>
       <button id="load-project" class="button secondary">Load project</button>
       <input id="project-file" type="file" accept=".json,application/json" hidden>
+      <button id="rename-project" class="button secondary" title="Rename this project and its saved project file">Rename project</button>
       <button id="save-project" class="button primary" disabled>Save project</button>
     </div>
   </header>
@@ -47,10 +48,23 @@
         </div>
       </section>
       <label class="field">Asset name
-        <input id="asset-name" value="player" maxlength="24" autocomplete="off">
+        <input id="asset-name" value="player" maxlength="64" autocomplete="off">
       </label>
       <p class="hint">Back to front: the last layer draws in front. Layers that share a palette slot are merged into fewer sprites when they overlap.</p>
       <div id="layers-list" class="layers-list"></div>
+      <div class="cell-row layer-frame-row" title="Applies to the selected layer in the current frame only">
+        <span class="toolbar-label">Frame layer</span>
+        <span id="layer-order-info" class="toolbar-label"></span>
+        <button id="layer-swap-back" class="button secondary" title="Swap this layer with the one behind it, in this frame only">▲ Back</button>
+        <button id="layer-swap-front" class="button secondary" title="Swap this layer with the one in front of it, in this frame only">▼ Front</button>
+      </div>
+      <div class="cell-row layer-frame-row" title="Layer offsets are per pixel. Hold Shift while dragging the purple anchor to snap to 8-pixel increments.">
+        <span class="toolbar-label">Anchor</span>
+        <input id="layer-anchor-x" type="number" step="1" value="0" aria-label="Layer anchor X offset in pixels">
+        <input id="layer-anchor-y" type="number" step="1" value="0" aria-label="Layer anchor Y offset in pixels">
+        <span class="toolbar-label">px</span>
+        <button id="layer-frame-reset" class="button quiet" title="Reset this layer's offset and every layer's draw order for this frame">Reset</button>
+      </div>
       <div class="cell-row">
         <span class="toolbar-label">Cell</span>
         <input id="cell-w" type="number" min="1" max="16" value="3" aria-label="Cell width in tiles">
@@ -77,7 +91,7 @@
           <button id="move-tool" class="button secondary" aria-pressed="false">Move</button>
           <button id="stamp-tool" class="button secondary" disabled aria-pressed="false">Stamp</button>
           <button id="eraser-tool" class="button secondary" aria-pressed="false" title="Click or drag to erase tiles on the current layer (E)">Eraser</button>
-          <button id="anchor-tool" class="button secondary" aria-pressed="false">Anchors</button>
+          <button id="anchor-tool" class="button secondary" aria-pressed="false" title="Drag anchors on the canvas; hold Shift to snap the selected-layer anchor to 8-pixel increments; click again to cycle targets">Anchors</button>
         </div>
       </div>
       <div id="stage-wrap" class="canvas-wrap stage-wrap">
@@ -204,6 +218,19 @@
       <div class="toolbar">
         <button id="new-project-cancel" class="button secondary" type="button">Cancel</button>
         <button class="button primary" type="submit">Create</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="rename-project-dialog" class="project-dialog">
+    <form id="rename-project-form">
+      <h2>Rename metasprite</h2>
+      <label class="field" for="rename-project-name">Project name
+        <input id="rename-project-name" maxlength="64" required autocomplete="off">
+      </label>
+      <div class="toolbar">
+        <button id="rename-project-cancel" class="button secondary" type="button">Cancel</button>
+        <button class="button primary" type="submit">Rename</button>
       </div>
     </form>
   </dialog>

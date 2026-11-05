@@ -11,8 +11,6 @@
 // and OBJ palette 1 (attribute 0x32).
 
 
-
-
 struct_table Entities[10] {
     u8  type;    // OBJ_* constant
     u16 x;       // top-left, world pixels
@@ -25,7 +23,7 @@ struct_table Entities[10] {
     i16 suby;
     u16 animaddr;
     u8  state;     // player_state: STATE_*
-    u8  flags;     // mode flags, see PlayerModeFlags
+    u8  flags;     // mode and entity flags
     u8  dash;      // dash frames left
     u8  bounce;    // set by a bouncer so the short-hop cut doesn't clip the launch
     u8  djump;     // double jump used
@@ -39,6 +37,14 @@ struct_table Entities[10] {
     u8  w;         // hitbox size in pixels (the player's box is HB_W x HB_H)
     u8  h;
 }
+
+enum EntityFlags {
+    ENTITY_FLAG_MOVABLE = 0,
+    ENTITY_FLAG_GHOST = 1,
+    ENTITY_FLAG_INPUT = 2,
+    ENTITY_FLAG_GRAVITY = 3,
+    ENTITY_FLAG_CONTACTABLE = 4
+};
 
 #define BOUNCE_W        20
 #define BOUNCE_H        25
@@ -82,11 +88,16 @@ fn spawn_entity(u8 type, u16 ex, u16 ey, u8 param) {
                 Entities[slot].animaddr = 1;
                 Entities[slot].w = BOUNCE_W;
                 Entities[slot].h = BOUNCE_H;
+                bit_set(Entities[slot].flags, ENTITY_FLAG_CONTACTABLE);
+                break;
+            case OBJ_GEM:
+                bit_set(Entities[slot].flags, ENTITY_FLAG_CONTACTABLE);
                 break;
             case OBJ_PLAYERSTART:
                 Entities[slot].animaddr = 0;
                 Entities[slot].w = HB_W;
                 Entities[slot].h = HB_H;
+                bit_set(Entities[slot].flags, ENTITY_FLAG_CONTACTABLE);
                 break;
         }
     }

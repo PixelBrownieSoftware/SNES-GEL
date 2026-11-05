@@ -35,14 +35,36 @@
     return keys.reduce((a, b) => (b < a ? b : a));
   }
 
-  // Compose the cells of one frame (layers back to front) into the entries the ROM stores.
+  // Back-to-front layer indices for a frame: its own `order` (invalid/duplicate entries
+  // dropped) followed by any layers it does not mention, which sit in front.
+  function layerOrder(frame, count) {
+    const seen = new Set();
+    const out = [];
+    for (const v of frame.order || []) {
+      const i = Number(v);
+      if (Number.isInteger(i) && i >= 0 && i < count && !seen.has(i)) { seen.add(i); out.push(i); }
+    }
+    for (let i = 0; i < count; i++) if (!seen.has(i)) out.push(i);
+    return out;
+  }
+
+  // Per-frame layer anchor: a pixel offset applied to every tile of that layer in the frame.
+  function layerOffset(frame, li) {
+    const a = frame.layerAnchors && frame.layerAnchors[li];
+    return { x: Math.round(Number(a && a.x) || 0), y: Math.round(Number(a && a.y) || 0) };
+  }
+
+  // Compose the cells of one frame (layers in the frame's draw order) into the entries the ROM stores.
   function composeFrame(frame, layers, tileCache) {
     const stacks = new Map();
     let raw = 0;
-    frame.layers.forEach((parts, li) => {
+    for (const li of layerOrder(frame, frame.layers.length)) {
+      const parts = frame.layers[li];
       const layer = layers[li];
-      if (!layer) return;
-      for (const p of parts) {
+      if (!layer) continue;
+      const off = layerOffset(frame, li);
+      for (const q of parts) {
+        const p = { ...q, x: q.x + off.x, y: q.y + off.y };
         const cacheKey = `${li}:${p.sheetX}:${p.sheetY}`;
         let base = tileCache.get(cacheKey);
         if (base === undefined) {
@@ -58,7 +80,7 @@
         stacks.get(key).list.push({ pal: layer.palette | 0, px });
         raw++;
       }
-    });
+    }
     const entries = [];
     for (const s of stacks.values()) {
       const merged = [];
@@ -126,5 +148,5 @@
     return result;
   }
 
-  return { analyze, composeFrame, readTile, canonicalKey, flipH, flipV };
+  return { analyze, composeFrame, readTile, canonicalKey, flipH, flipV, layerOrder, layerOffset };
 });

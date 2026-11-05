@@ -1,6 +1,7 @@
 {
   "format": "gel-metasprite-project-v1",
   "projects": [
+    "lady.metasprite.json",
     "player.metasprite.json",
     "spring.metasprite.json"
   ]

@@ -75,3 +75,56 @@ def test_server_saves_projects_assets_and_updates_manifest(tmp_path):
         editor.shutdown()
         editor.server_close()
         thread.join()
+
+
+def test_server_renames_project_and_updates_manifest(tmp_path):
+    old_project = {"format": "gel-metasprite-v2", "name": "hero"}
+    (tmp_path / "hero.metasprite.json").write_text(json.dumps(old_project), encoding="utf-8")
+    editor = server.EditorServer(("127.0.0.1", 0), tmp_path)
+    thread = threading.Thread(target=editor.serve_forever)
+    thread.start()
+    base = f"http://127.0.0.1:{editor.server_address[1]}"
+    try:
+        renamed_project = {"format": "gel-metasprite-v2", "name": "main_character"}
+        request = Request(
+            f"{base}/api/projects/rename",
+            data=json.dumps({
+                "oldName": "hero.metasprite.json",
+                "newName": "main_character.metasprite.json",
+                "project": renamed_project,
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request) as response:
+            catalog = json.loads(response.read())
+
+        assert catalog["projects"] == ["main_character.metasprite.json"]
+        assert not (tmp_path / "hero.metasprite.json").exists()
+        assert json.loads((tmp_path / "main_character.metasprite.json").read_text(encoding="utf-8")) == renamed_project
+        assert json.loads((tmp_path / server.MANIFEST_NAME).read_text(encoding="utf-8"))["projects"] == [
+            "main_character.metasprite.json"
+        ]
+
+        (tmp_path / "taken.metasprite.json").write_text("{}", encoding="utf-8")
+        request = Request(
+            f"{base}/api/projects/rename",
+            data=json.dumps({
+                "oldName": "main_character.metasprite.json",
+                "newName": "taken.metasprite.json",
+                "project": renamed_project,
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urlopen(request)
+        except HTTPError as error:
+            assert error.code == 400
+        else:
+            raise AssertionError("Renaming over an existing project was unexpectedly accepted.")
+        assert (tmp_path / "main_character.metasprite.json").is_file()
+    finally:
+        editor.shutdown()
+        editor.server_close()
+        thread.join()

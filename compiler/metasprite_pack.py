@@ -138,16 +138,37 @@ def pack_project(path, data, assets_dir, out_dir, gel_lines, asm_lines, rom_offs
             px = flip_v(px)
         return px
 
+    def layer_order(fr):
+        n = len(fr["layers"])
+        seen, out = set(), []
+        for v in fr.get("order") or []:
+            if isinstance(v, int) and 0 <= v < n and v not in seen:
+                seen.add(v)
+                out.append(v)
+        return out + [i for i in range(n) if i not in seen]
+
+    def layer_offset(fr, li):
+        anchors = fr.get("layerAnchors") or []
+        a = anchors[li] if li < len(anchors) else None
+        a = a or {}
+        dx, dy = int(a.get("x") or 0), int(a.get("y") or 0)
+        if dx % 8 or dy % 8:
+            fail(f"frame '{fr.get('name', '?')}' layer '{layers[li]['name']}' anchor offset "
+                 f"({dx},{dy}) must be a multiple of 8")
+        return dx, dy
+
     # Build per-frame cell lists (back to front) at stage coordinates.
     raw_frames = []
     for fr in frames:
         cells = []
-        for li, parts in enumerate(fr["layers"]):
+        for li in layer_order(fr):
+            parts = fr["layers"][li]
             slot = int(layers[li].get("palette", 0))
+            dx, dy = layer_offset(fr, li)
             for p in parts:
                 px = cell_pixels(li, p["sheetX"], p["sheetY"], p.get("hflip"), p.get("vflip"))
                 if any(px):
-                    cells.append((p["x"], p["y"], slot, px))
+                    cells.append((p["x"] + dx, p["y"] + dy, slot, px))
         raw_frames.append(cells)
 
     all_cells = [c for f in raw_frames for c in f]
