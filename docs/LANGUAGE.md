@@ -29,6 +29,9 @@ extern SOME_LABEL;           // label defined in assembly / generated assets
 ```
 
 Locals are declared inside functions: `u8 i = 0;`.
+Function parameters and locals have static RAM slots. GEL reuses those
+addresses between functions that cannot be active at the same time; globals
+remain in their own storage, with no runtime stack allocation for locals.
 
 ## Functions
 

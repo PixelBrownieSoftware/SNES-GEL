@@ -121,6 +121,8 @@ class Compiler:
         self.enums = {}
         self.funcs = {}
         self.func_ast = {}
+        self.func_frames = {}
+        self.func_frame_cursors = {}
         self.inline_ok = {}
         self.inlined = set()
         self.inline_end = None
@@ -188,6 +190,98 @@ class Compiler:
             self.error(f"Out of variable RAM allocating '{what}'")
         self.dp_next = addr + size
         return addr
+
+    def alloc_local_dp(self, size, what):
+        cursor = self.func_frame_cursors.get(self.fn_name)
+        if cursor is None:
+            return self.alloc_dp(size, what)
+        base, frame_size, _ = self.func_frames[self.fn_name]
+        if cursor + size > base + frame_size:
+            self.error(f"Function frame overflow allocating '{what}'")
+        self.func_frame_cursors[self.fn_name] = cursor + size
+        return cursor
+
+    def allocate_function_frames(self):
+        calls = {name: set() for name in self.funcs}
+        sizes = {}
+        for name, body in self.func_ast.items():
+            size = sum(param.size for param in self.funcs[name])
+            nodes = list(body.iter_subtrees())
+            for node in nodes:
+                if node.data == "func_call":
+                    callee = str(node.children[0])
+                    if callee in calls:
+                        calls[name].add(callee)
+                elif node.data == "var_decl_stmt":
+                    size += SIZES[str(node.children[0])]
+                elif node.data == "table_iter_stmt":
+                    size += 2
+                    table = self.tables.get(str(node.children[0]))
+                    if table is not None and table.mask is not None:
+                        size += 2
+            if any(node.data == "inline_asm_stmt" for node in nodes):
+                calls[name].update(calls)
+            sizes[name] = size
+
+        reachable = {}
+        for name in calls:
+            seen, pending = set(), list(calls[name])
+            while pending:
+                callee = pending.pop()
+                if callee in seen:
+                    continue
+                seen.add(callee)
+                pending.extend(calls[callee] - seen)
+            reachable[name] = seen
+
+        conflicts = {
+            name: {other for other in calls
+                   if other in reachable[name] or name in reachable[other]}
+            for name in calls
+        }
+        static_ranges = [(DP_START, self.dp_next - 1)] if self.dp_next > DP_START else []
+        static_ranges += list(self.reserved) + [SOUND_DP]
+        static_ranges += [(lo, hi) for lo, hi, _ in self.explicit_ranges]
+        static_ranges += [
+            (var.addr, var.addr + var.size - 1)
+            for var in self.vars.values() if not var.mmio
+        ]
+        allocated = {}
+        for name in sorted(sizes, key=lambda n: sizes[n], reverse=True):
+            size = sizes[name]
+            if not size:
+                self.func_frames[name] = (0, 0, 0)
+                continue
+            candidate = max(self.dp_next, DP_START)
+            while True:
+                if candidate + size - 1 > DP_END:
+                    self.error(f"Out of variable RAM allocating function frame '{name}'")
+                blockers = list(static_ranges)
+                blockers.extend(
+                    (base, base + sizes[other] - 1)
+                    for other, base in allocated.items() if other in conflicts[name]
+                )
+                overlap = next(
+                    ((lo, hi) for lo, hi in blockers
+                     if candidate <= hi and lo <= candidate + size - 1),
+                    None,
+                )
+                if overlap is None:
+                    break
+                candidate = overlap[1] + 1
+            allocated[name] = candidate
+            param_size = sum(param.size for param in self.funcs[name])
+            base = candidate
+            param_addr = base
+            for param in self.funcs[name]:
+                param.addr = param_addr
+                param_addr += param.size
+            self.func_frames[name] = (base, size, param_addr)
+        if allocated:
+            self.dp_next = max(
+                self.dp_next,
+                max(base + sizes[name] for name, base in allocated.items()),
+            )
 
     def plan_persist(self, tree):
         """Give every 'persist' global a stable address so hot-reloads can carry its value over."""
@@ -344,7 +438,7 @@ class Compiler:
                     self.check_type(ptype)
                     if len(p.children) > 2:
                         self.error(f"reg() parameter hints are not supported (param '{pname}')", p)
-                    params.append(Var(pname, ptype, self.alloc_dp(SIZES[ptype], f"{name}.{pname}")))
+                    params.append(Var(pname, ptype, 0))
         if name in self.funcs:
             self.error(f"Duplicate function '{name}'")
         self.funcs[name] = params
@@ -353,7 +447,7 @@ class Compiler:
     INLINE_MAX_NODES = 25       # always inline bodies up to this size
     INLINE_LOOP_NODES = 60      # ...or up to this size when the call site is inside a loop
     INLINE_STMTS = {"assign_stmt", "if_stmt", "return_stmt", "expr_stmt", "while_stmt"}
-    BUILTIN_CALLS = {"bit", "bit_set", "bit_clear", "bit_test", "peek8", "peek8l"}
+    BUILTIN_CALLS = {"bit", "bit_set", "bit_clear", "bit_test", "abs", "clamp", "sign", "peek8", "peek8l"}
 
     def can_inline(self, name):
         """Small functions (no locals or asm) are expanded in place. They may call other
@@ -771,13 +865,76 @@ class Compiler:
             self.label(done, keep=True)
         return lty if lty == "f16" or signed else "u16"
 
+    @staticmethod
+    def signed_digits(mag):
+        """Canonical signed-digit form of mag: [(bit, +1/-1)], highest bit first. Never has
+        more terms than plain binary (0.9375 = 1 - 1/16 is two terms, not four)."""
+        digits, k = [], 0
+        while mag:
+            if mag & 1:
+                d = 2 - (mag & 3)
+                digits.append((k, d))
+                mag -= d
+            mag >>= 1
+            k += 1
+        return digits[::-1]
+
+    def mul_fixed_const(self, lty, raw):
+        """integer * 8.8 constant -> integer with no multiply loop: a sum of shifted copies,
+        one per signed digit of the constant. Consecutive right-shifted terms continue from the
+        previous term's value (arithmetic shifts compose exactly), so each shift step is done once.
+        Right shifts truncate, so the result can be off by up to one per term."""
+        signed = lty in SIGNED
+        neg = raw < 0
+        mag = abs(raw) & 0xFFFF
+        self.want_m(16)
+        if mag == 0:
+            self.emit("LDA.w #$0000")
+            return "f16" if lty == "f16" else "u16"
+        digits = self.signed_digits(mag)
+        multi = len(digits) > 1
+        if multi:
+            self.emit(f"STA {SCRATCH}")
+        prev = None     # bit position whose shifted value A currently holds
+        for i, (k, d) in enumerate(digits):
+            last = i == len(digits) - 1
+            if prev is not None and k <= 8 and prev <= 8:
+                self.shift_const(">>", prev - k, signed)
+            else:
+                if prev is not None:
+                    self.emit(f"LDA {SCRATCH}")
+                self.shift_const("<<" if k >= 8 else ">>", abs(k - 8), signed)
+            prev = k
+            if i == 0:
+                if multi:
+                    self.emit(f"STA {SCRATCH2}")
+                continue
+            if not last:
+                self.emit("TAY")
+            if d > 0:
+                self.emit("CLC")
+            else:
+                self.emit("EOR.w #$FFFF")
+                self.emit("SEC")
+            self.emit(f"ADC {SCRATCH2}")
+            if not last:
+                self.emit(f"STA {SCRATCH2}")
+                self.emit("TYA")
+        if neg:
+            self.emit("EOR.w #$FFFF")
+            self.emit("INC A")
+        if lty == "f16":
+            return "f16"
+        return "i16" if signed or neg else "u16"
+
     def multiply(self, lty, rnode):
         c = self.const(rnode)
-        if c is not None and c[1] != "f16":
+        if c is not None and c[1] == "f16" and lty == "f16":
+            return self.mul_fixed_const(lty, c[0])
+        if c is not None:
+            # int * f16 constant is a raw multiply yielding f16, matching constant folding (2 * 1.5 == 3.0)
             self.mul_const(c[0])
             return combine(lty, c[1])
-        if c is not None and lty != "f16":
-            self.error("Multiplying an integer by a fixed-point constant is not supported", rnode)
         rty = self.operand_via_scratch(rnode)
         if lty == "f16" and rty == "f16":
             self.emit("JSR _gel_fmul")
@@ -892,6 +1049,63 @@ class Compiler:
         self.emit(f"AND.w #${mask:04X}")
         return "u16"
 
+    def clamp(self, args, node):
+        """clamp(x, lo, hi): x is any expression; lo and hi must be constants or 16-bit variables
+        so they can be used directly as ALU operands. Branch-based, no subroutine and no scratch RAM."""
+        if len(args) != 3:
+            self.error("'clamp' takes 3 arguments (value, min, max)", node)
+        lo, hi = self.simple_operand(args[1]), self.simple_operand(args[2])
+        if lo is None or hi is None:
+            self.error("'clamp' min and max must be constants or 16-bit variables", node)
+        ty = self.expr(args[0])
+        signed = ty in SIGNED or lo[1] in SIGNED or hi[1] in SIGNED
+        self.want_m(16)
+        done = self.new_label()
+        if not signed:
+            low = self.new_label()
+            c = self.const(args[1])
+            skip_lo = c is not None and c[0] == 0
+            if not skip_lo:
+                self.alu("CMP", lo[0], lo[2])
+                self.emit(f"BCC {low}")
+            self.alu("CMP", hi[0], hi[2])
+            self.emit(f"BEQ {done}")
+            self.emit(f"BCC {done}")
+            self.alu("LDA", hi[0], hi[2])
+            if not skip_lo:
+                self.emit(f"BRA {done}")
+                self.label(low, keep=True)
+                self.alu("LDA", lo[0], lo[2])
+            self.label(done)
+            self.want_m(16)
+            return "u16"
+        low, a, b, keep = (self.new_label() for _ in range(4))
+        self.emit("TAX")
+        self.emit("SEC")
+        self.alu("SBC", lo[0], lo[2])
+        self.emit(f"BVC {a}")
+        self.emit("EOR.w #$8000")
+        self.label(a, keep=True)
+        self.emit(f"BMI {low}")
+        self.emit("TXA")
+        self.emit("SEC")
+        self.alu("SBC", hi[0], hi[2])
+        self.emit(f"BEQ {keep}")
+        self.emit(f"BVC {b}")
+        self.emit("EOR.w #$8000")
+        self.label(b, keep=True)
+        self.emit(f"BMI {keep}")
+        self.alu("LDA", hi[0], hi[2])
+        self.emit(f"BRA {done}")
+        self.label(low, keep=True)
+        self.alu("LDA", lo[0], lo[2])
+        self.emit(f"BRA {done}")
+        self.label(keep, keep=True)
+        self.emit("TXA")
+        self.label(done)
+        self.want_m(16)
+        return "f16" if ty == "f16" else "i16"
+
     def call(self, name, args, node):
         if name == "bit":
             c = self.const(node)
@@ -904,6 +1118,43 @@ class Compiler:
             return self.bit_modify(name, args, node)
         if name == "bit_test":
             return self.bit_test(args, node)
+        if name == "abs":
+            if len(args) != 1:
+                self.error("'abs' takes 1 argument", node)
+            ty = self.expr(args[0])
+            self.want_m(16)
+            if ty in SIGNED:
+                done = self.new_label()
+                self.emit("CMP.w #$0000")
+                self.emit(f"BPL {done}")
+                self.emit("EOR.w #$FFFF")
+                self.emit("INC A")
+                self.label(done)
+                self.want_m(16)
+            return "f16" if ty == "f16" else "u16"
+        if name == "sign":
+            if len(args) != 1:
+                self.error("'sign' takes 1 argument", node)
+            ty = self.expr(args[0])
+            self.want_m(16)
+            done = self.new_label()
+            self.emit("CMP.w #$0000")
+            self.emit(f"BEQ {done}")
+            if ty in SIGNED:
+                neg = self.new_label()
+                one = "$0100" if ty == "f16" else "$0001"
+                self.emit(f"BMI {neg}")
+                self.emit(f"LDA.w #{one}")
+                self.emit(f"BRA {done}")
+                self.label(neg, keep=True)
+                self.emit(f"LDA.w #{'$FF00' if ty == 'f16' else '$FFFF'}")
+            else:
+                self.emit("LDA.w #$0001")
+            self.label(done)
+            self.want_m(16)
+            return "f16" if ty == "f16" else "i16"
+        if name == "clamp":
+            return self.clamp(args, node)
         if name == "peek8l":
             c = self.const(args[0]) if len(args) == 2 else None
             if c is None:
@@ -1128,7 +1379,7 @@ class Compiler:
         self.check_type(vtype)
         v = self.scope.get(name)
         if v is None or v.type != vtype:
-            v = Var(name, vtype, self.alloc_dp(SIZES[vtype], name))
+            v = Var(name, vtype, self.alloc_local_dp(SIZES[vtype], name))
             self.scope[name] = v
         if len(s.children) > 2:
             self.expr(s.children[2])
@@ -1232,9 +1483,9 @@ class Compiler:
     def s_table_iter_stmt(self, s):
         t = self.get_table(str(s.children[0]))
         vname = str(s.children[1])
-        v = Var(vname, "u16", self.alloc_dp(2, vname))
+        v = Var(vname, "u16", self.alloc_local_dp(2, vname))
         self.scope[vname] = v
-        bit = self.alloc_dp(2, "for_each bit") if t.mask is not None else None
+        bit = self.alloc_local_dp(2, "for_each bit") if t.mask is not None else None
         top, nxt = self.new_label(), self.new_label()
         self.want_m(16)
         self.emit(f"; --- {t.name}.for_each({vname}) ---")
@@ -1303,6 +1554,8 @@ class Compiler:
         name = str(kids[0])
         self.fn_name = name
         self.scope = {p.name: p for p in self.funcs[name]}
+        frame = self.func_frames[name]
+        self.func_frame_cursors[name] = frame[2]
         self.m = 16          # calling convention: functions are entered and left in 16-bit A
         start = len(self.out)
         self.raw(f"\n; --- Function: {name} ---")
@@ -1349,6 +1602,7 @@ class Compiler:
         self.plan_persist(tree)
         for item in tree.children:
             self.declare(item)
+        self.allocate_function_frames()
         self.layout = {v.name: [v.type, v.addr] for v, _ in self.persist_vars}
         # Pool tables are carried across hot reloads too, but only when their layout is
         # unchanged (same address, mask and fields); otherwise their bytes would be garbage.

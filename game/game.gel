@@ -61,7 +61,7 @@ enum GameMode {
 
 // The player is slot 0 of the Entities table (see entities.gel). These names alias its fields,
 // so player.gel and the collision code read and write the entity directly.
-#define PLAYER_ENT   0
+#define PLAYER_ENT   0//9 if you want to be the spring
 #define player_x     Entities[0].x
 #define player_y     Entities[0].y
 #define player_subx  Entities[0].subx
@@ -492,17 +492,19 @@ fn move_y(u16 e) {
 
 #include "player.gel"
 #include "entities.gel"
+i16 cam_calc_x = 0;
+i16 cam_calc_y = 0;
 
-fn update_camera() {
-    i16 cx = player_x - CAM_OFFSET_X;
-    if (cx < 0) { cx = 0; }
-    if (cx > LEVEL_MAX_CAM_X) { cx = LEVEL_MAX_CAM_X; }
-    cam_x = cx;
+fn update_camera(u16 e) {
+    cam_calc_x = Entities[e].x - CAM_OFFSET_X;
+    if (cam_calc_x < 0) { cam_calc_x = 0; }
+    if (cam_calc_x > LEVEL_MAX_CAM_X) { cam_calc_x = LEVEL_MAX_CAM_X; }
+    cam_x = cam_calc_x;
 
-    i16 cy = player_y - CAM_OFFSET_Y;
-    if (cy < 0) { cy = 0; }
-    if (cy > LEVEL_MAX_CAM_Y) { cy = LEVEL_MAX_CAM_Y; }
-    cam_y = cy;
+    cam_calc_y = Entities[e].y - CAM_OFFSET_Y;
+    if (cam_calc_y < 0) { cam_calc_y = 0; }
+    if (cam_calc_y > LEVEL_MAX_CAM_Y) { cam_calc_y = LEVEL_MAX_CAM_Y; }
+    cam_y = cam_calc_y;
 }
 
 // Runs once per logic step, so animation speed is tied to the 60 Hz tick, not the frame rate.
@@ -538,34 +540,34 @@ fn update_anim(u16 e) {
 //     return lo | (hi << 8);
 // }
 
-fn render_player() {
-    dummy_number = -2;
-    if (Entities[0].type != OBJ_PLAYERSTART) { return; }
-    //PLAYER_MS_ANIMS
-    u16 animaddr = Entities[0].animaddr;
-    u16 anim_table = MetaspriteHeader[animaddr].anim_table;
-    u16 frame_table = MetaspriteHeader[animaddr].frame_table;
-    u16 off_x = MetaspriteHeader[animaddr].off_x;
-    u16 off_y = MetaspriteHeader[animaddr].off_y;
-    u16 off_mirror_x = MetaspriteHeader[animaddr].off_mirror_x;
-    u8 frame = std_anim_frame(anim_table, Entities[0].clip, Entities[0].step);
-    // The artwork faces left, so facing right (flag 0) is the flipped case.
-    u8 attr = MetaspriteHeader[animaddr].attr | OAM_HFLIP;
-    i16 draw_x = player_x - ms_table_off(off_mirror_x, frame);
-    if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
-        bit_clear(attr, OAMB_HFLIP);
-        draw_x = player_x - ms_table_off(off_x, frame);
-    }
-    std_draw_frame(
-        frame_table,
-        frame,
-        draw_x - cam_x,
-        player_y - ms_table_off(off_y, frame) - cam_y,
-        attr,
-        MetaspriteHeader[animaddr].tile_base
-    );
-    player_curr_anim = Entities[0].step;
-}
+// fn render_player() {
+//     dummy_number = -2;
+//     if (Entities[0].type != OBJ_PLAYERSTART) { return; }
+//     //PLAYER_MS_ANIMS
+//     u16 animaddr = Entities[0].animaddr;
+//     u16 anim_table = MetaspriteHeader[animaddr].anim_table;
+//     u16 frame_table = MetaspriteHeader[animaddr].frame_table;
+//     u16 off_x = MetaspriteHeader[animaddr].off_x;
+//     u16 off_y = MetaspriteHeader[animaddr].off_y;
+//     u16 off_mirror_x = MetaspriteHeader[animaddr].off_mirror_x;
+//     u8 frame = std_anim_frame(anim_table, Entities[0].clip, Entities[0].step);
+//     // The artwork faces left, so facing right (flag 0) is the flipped case.
+//     u8 attr = MetaspriteHeader[animaddr].attr | OAM_HFLIP;
+//     i16 draw_x = player_x - ms_table_off(off_mirror_x, frame);
+//     if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
+//         bit_clear(attr, OAMB_HFLIP);
+//         draw_x = player_x - ms_table_off(off_x, frame);
+//     }
+//     std_draw_frame(
+//         frame_table,
+//         frame,
+//         draw_x - cam_x,
+//         player_y - ms_table_off(off_y, frame) - cam_y,
+//         attr,
+//         MetaspriteHeader[animaddr].tile_base
+//     );
+//     player_curr_anim = Entities[0].step;
+// }
 
 // The HUD text only changes with the ability, so it is redrawn then (255 forces the first draw).
 #define HUD_UNDRAWN 255
@@ -615,8 +617,9 @@ fn game_tick() {
     std_oam_begin();
     while (steps > 0) {
         std_input_update();
-        update_player();
-        update_camera();
+        poll_input();
+        update_player(PLAYER_ENT);
+        update_camera(PLAYER_ENT);
         update_anim(PLAYER_ENT);
         update_entities();
         // update_bullets();
@@ -703,7 +706,7 @@ fn init_game() {
         }
         spawn_level_objects();
     }
-    update_camera();
+    update_camera(PLAYER_ENT);
     level_stream_init();
 
     // 5. Enable Controller Auto-Joypad Read, then TURN SCREEN ON

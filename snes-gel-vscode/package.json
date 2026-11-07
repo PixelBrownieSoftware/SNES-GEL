@@ -2,7 +2,7 @@
     "name":  "snes-gel",
     "displayName":  "SNES-GEL Language Support",
     "description":  "Syntax highlighting and language configuration for SNES-GEL: persist variables, enums, struct tables, bit helpers, inline asm, and the standard library.",
-    "version":  "0.3.0",
+    "version":  "0.3.2",
     "publisher":  "pixelbrownie",
     "icon":  "icon.png",
     "engines":  {
@@ -36,6 +36,23 @@
                                              "path":  "./syntaxes/gel.tmLanguage.json"
                                          }
                                      ],
+                        "themes":  [
+                                       {
+                                           "label":  "SNES-GEL Prototype",
+                                           "uiTheme":  "vs-dark",
+                                           "path":  "./themes/gel-prototype-color-theme.json"
+                                       }
+                                   ],
+                        "semanticTokenTypes": [
+                            { "id": "gelU8", "description": "GEL u8 variables and fields" },
+                            { "id": "gelU16", "description": "GEL u16 variables and fields" },
+                            { "id": "gelI8", "description": "GEL i8 variables and fields" },
+                            { "id": "gelI16", "description": "GEL i16 variables and fields" },
+                            { "id": "gelF16", "description": "GEL f16 variables and fields" },
+                            { "id": "gelF32", "description": "GEL f32 variables and fields" },
+                            { "id": "gelEnum", "description": "GEL enum members" },
+                            { "id": "gelDefine", "description": "GEL defines" }
+                        ],
                         "configuration":  {
                                               "title":  "SNES-GEL",
                                               "properties":  {

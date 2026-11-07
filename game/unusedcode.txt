@@ -1,0 +1,29 @@
+Player update code 07/11/2026
+// if (pad1_held & BTN_LEFT) {
+    //     player_vx -= PLAYER_ACCEL;
+    //     if (player_vx < -PLAYER_MAX_SPEED) {
+    //         // Over top speed (just after a dash): bleed off rather than snap.
+    //         player_vx += FRICTION;
+    //         if (player_vx > -PLAYER_MAX_SPEED) {
+    //             player_vx = -PLAYER_MAX_SPEED;
+    //         }
+    //     }
+    //     bit_set(mode_flags, MODE_FLAG_DIRECTION);
+    // } else if (pad1_held & BTN_RIGHT) {
+    //     player_vx += PLAYER_ACCEL;
+    //     if (player_vx > PLAYER_MAX_SPEED) {
+    //         player_vx -= FRICTION;
+    //         if (player_vx < PLAYER_MAX_SPEED) {
+    //             player_vx = PLAYER_MAX_SPEED;
+    //         }
+    //     }
+    //     bit_clear(mode_flags, MODE_FLAG_DIRECTION);
+    // } else {
+    //     if (player_vx > FRICTION) {
+    //         player_vx -= FRICTION;
+    //     } else if (player_vx < -FRICTION) {
+    //         player_vx += FRICTION;
+    //     } else {
+    //         player_vx = 0.0;
+    //     }
+    // }

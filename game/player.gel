@@ -29,7 +29,29 @@ enum Character {
 #define air_actions       Entities[0].air
 // Frames during which the wall can't be re-grabbed after a wall jump.
 #define wall_lock         Entities[0].wall
-u8 input_presses = 0;
+// This whole thing will hold a bit for:
+// HORIZONTAL PRESSED
+// VERTICAL PRESSED
+// HORIZONTAL DIRECTION
+// VERTICAL DIRECTION
+//Woah... that fit the SNES controller perfectly
+#define INPUT_HORIZONTAL_PRESSED  0
+#define INPUT_VERTICAL_PRESSED    1
+#define INPUT_HORIZONTAL_DIR      2//Left = 1, Right = 0
+#define INPUT_VERTICAL_DIR        3//Up = 1, Down = 0
+#define INPUT_ACTION_PRESSED      4//A
+#define INPUT_ACTION2_PRESSED     5//B
+#define INPUT_ACTION3_PRESSED     6//X
+#define INPUT_ACTION4_PRESSED     7//Y
+#define INPUT_ACTION_RELEASED     8//A
+#define INPUT_ACTION2_RELEASED    9//B
+#define INPUT_ACTION3_RELEASED    10//X
+#define INPUT_ACTION4_RELEASED    11//Y
+#define INPUT_ACTION_PUSHED     12//A
+#define INPUT_ACTION2_PUSHED    13//B
+#define INPUT_ACTION3_PUSHED    14//X
+#define INPUT_ACTION4_PUSHED    15//Y
+u16 input_presses = 0;
 
 fn set_character(u8 c) {
     player_char = c;
@@ -43,65 +65,174 @@ fn set_character(u8 c) {
 }
 
 // ---- Horizontal movement ----
-fn update_dash() {
+fn update_dash(u16 e) {
     if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
-        player_vx = -DASH_SPEED;
+        Entities[e].vx = -DASH_SPEED;
     } else {
-        player_vx = DASH_SPEED;
+        Entities[e].vx = DASH_SPEED;
     }
-    player_vy = 0.0;
+    Entities[e].vy = 0.0;
     dash_frames--;
     if (dash_frames == 0) {
         // Exit with some leftover speed that bleeds off, instead of a hard stop.
         if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
-            player_vx = -DASH_EXIT_SPEED;
+            Entities[e].vx = -DASH_EXIT_SPEED;
         } else {
-            player_vx = DASH_EXIT_SPEED;
+            Entities[e].vx = DASH_EXIT_SPEED;
         }
     }
 }
+
+fn vert_input(u8 input) {
+    i8 v = 0;
+    //Bit test for vertical input
+    //Dude just have a look at todo.md
+    if (bit_test(input, INPUT_VERTICAL_PRESSED)) {
+        // Vertical input was pressed
+        if (bit_test(input, INPUT_VERTICAL_DIR)) {
+            v = -1;
+        } else {
+            v = 1;
+        }
+    }
+    return v;
+}
+fn horiz_input(u8 input) {
+    i8 h = 0;
+    //Bit test for horizontal input
+    //Dude just have a look at todo.md
+    if (bit_test(input, INPUT_HORIZONTAL_PRESSED)) {
+        // Horizontal input was pressed
+        if (bit_test(input, INPUT_HORIZONTAL_DIR)) {
+            h = -1;
+        } else {
+            h = 1;
+        }
+    }
+    return h;
+}
+
+fn poll_input() {
+    // --- Horizontal Movement ---
+    if (pad1_held & BTN_LEFT || pad1_held & BTN_RIGHT) {
+        bit_set(input_presses, INPUT_HORIZONTAL_PRESSED);
+        if (pad1_held & BTN_LEFT) {
+            bit_set(input_presses, INPUT_HORIZONTAL_DIR);
+        } else if (pad1_held & BTN_RIGHT) {
+            bit_clear(input_presses, INPUT_HORIZONTAL_DIR);
+        }
+    } else {
+        bit_clear(input_presses, INPUT_HORIZONTAL_PRESSED);
+    }
+
+    // --- Vertical Movement ---
+    if (pad1_held & BTN_UP || pad1_held & BTN_DOWN) {
+        bit_set(input_presses, INPUT_VERTICAL_PRESSED);
+        if (pad1_held & BTN_UP) {
+            bit_set(input_presses, INPUT_VERTICAL_DIR);
+        } else if (pad1_held & BTN_DOWN) {
+            bit_clear(input_presses, INPUT_VERTICAL_DIR);
+        }
+    } else {
+        bit_clear(input_presses, INPUT_VERTICAL_PRESSED);
+    }
+
+    // --- Action Button A ---
+    if (pad1_held & BTN_A) {
+        bit_set(input_presses, INPUT_ACTION_PRESSED);
+        bit_clear(input_presses, INPUT_ACTION_RELEASED);
+    } else {
+        bit_clear(input_presses, INPUT_ACTION_PRESSED);
+        bit_set(input_presses, INPUT_ACTION_RELEASED);
+    }
+    if (pad1_pressed & BTN_A) {
+        bit_set(input_presses, INPUT_ACTION_PUSHED);
+    } else {
+        bit_clear(input_presses, INPUT_ACTION_PUSHED);
+    }
+
+    // --- Action Button B ---
+    if (pad1_held & BTN_B) {
+        bit_set(input_presses, INPUT_ACTION2_PRESSED);
+        bit_clear(input_presses, INPUT_ACTION2_RELEASED);
+    } else {
+        bit_clear(input_presses, INPUT_ACTION2_PRESSED);
+        bit_set(input_presses, INPUT_ACTION2_RELEASED);
+    }
+    if (pad1_pressed & BTN_B) {
+        bit_set(input_presses, INPUT_ACTION2_PUSHED);
+    } else {
+        bit_clear(input_presses, INPUT_ACTION2_PUSHED);
+    }
+
+    // --- Action Button X ---
+    if (pad1_held & BTN_X) {
+        bit_set(input_presses, INPUT_ACTION3_PRESSED);
+        bit_clear(input_presses, INPUT_ACTION3_RELEASED);
+    } else {
+        bit_clear(input_presses, INPUT_ACTION3_PRESSED);
+        bit_set(input_presses, INPUT_ACTION3_RELEASED);
+    }
+    if (pad1_pressed & BTN_X) {
+        bit_set(input_presses, INPUT_ACTION3_PUSHED);
+    } else {
+        bit_clear(input_presses, INPUT_ACTION3_PUSHED);
+    }
+
+    // --- Action Button Y ---
+    if (pad1_held & BTN_Y) {
+        bit_set(input_presses, INPUT_ACTION4_PRESSED);
+        bit_clear(input_presses, INPUT_ACTION4_RELEASED);
+    } else {
+        bit_clear(input_presses, INPUT_ACTION4_PRESSED);
+        bit_set(input_presses, INPUT_ACTION4_RELEASED);
+    }
+    if (pad1_pressed & BTN_Y) {
+        bit_set(input_presses, INPUT_ACTION4_PUSHED);
+    } else {
+        bit_clear(input_presses, INPUT_ACTION4_PUSHED);
+    }
+}
+
 
 //This would need to be put in the entites system
 //Instead of pad1_held booleans, we would have a general input system for entities.
 //i.e. horiz_input and vert_input to check if those buttons were pressed
 //This function will not know or care about the specific input source; it will just respond to the input state provided by the entity system.
-fn update_run() {
+f16 dummy_vx = 0.0;
+f16 dummy_fric = 0.0;
+fn update_run(u16 e) {
     if (bit_test(mode_flags, MODE_FLAG_POUNDING)) {
-        player_vx = 0.0;
+        Entities[e].vx = 0.0;
         return 0;
     }
-    if (pad1_held & BTN_LEFT) {
-        player_vx -= PLAYER_ACCEL;
-        if (player_vx < -PLAYER_MAX_SPEED) {
-            // Over top speed (just after a dash): bleed off rather than snap.
-            player_vx += FRICTION;
-            if (player_vx > -PLAYER_MAX_SPEED) {
-                player_vx = -PLAYER_MAX_SPEED;
-            }
-        }
-        bit_set(mode_flags, MODE_FLAG_DIRECTION);
-    } else if (pad1_held & BTN_RIGHT) {
-        player_vx += PLAYER_ACCEL;
-        if (player_vx > PLAYER_MAX_SPEED) {
-            player_vx -= FRICTION;
-            if (player_vx < PLAYER_MAX_SPEED) {
-                player_vx = PLAYER_MAX_SPEED;
-            }
-        }
-        bit_clear(mode_flags, MODE_FLAG_DIRECTION);
-    } else {
-        if (player_vx > FRICTION) {
-            player_vx -= FRICTION;
-        } else if (player_vx < -FRICTION) {
-            player_vx += FRICTION;
+    i8 h = horiz_input(input_presses);
+    if (bit_test(input_presses, INPUT_HORIZONTAL_PRESSED)) {
+        Entities[e].vx += h * PLAYER_ACCEL;
+        //Use whatever is the equivalent of abs() in GEL
+        Entities[e].vx += h * FRICTION;
+        Entities[e].vx = clamp(Entities[e].vx, -PLAYER_MAX_SPEED, PLAYER_MAX_SPEED);
+        if (h < 0) {
+            bit_set(mode_flags, MODE_FLAG_DIRECTION);
         } else {
-            player_vx = 0.0;
+            bit_clear(mode_flags, MODE_FLAG_DIRECTION);
+        }
+    } else{
+        
+        if (abs(Entities[e].vx) > FRICTION) {
+            Entities[e].vx += -sign(Entities[e].vx) * FRICTION;
+        } else {
+            Entities[e].vx = 0.0;
         }
     }
-    if (player_vx == 0.0) {
-        player_state = STATE_IDLE;
+    dummy_vx = abs(Entities[e].vx);
+    dummy_fric = FRICTION;
+
+    
+    if (Entities[e].vx == 0.0) {
+        Entities[e].state = STATE_IDLE;
     } else {
-        player_state = STATE_MOVING;
+        Entities[e].state = STATE_MOVING;
     }
 }
 
@@ -109,11 +240,11 @@ fn play_jump_sound() {
     std_sfx_play(player_jump_sfx, 15, 8, 6);
 }
 
-fn update_footstep_sound() {
+fn update_footstep_sound(u16 e) {
     if (game_mode != MODE_PLATFORMER ||
         !bit_test(mode_flags, MODE_FLAG_ON_GROUND) ||
-        player_state != STATE_MOVING ||
-        player_vx == 0.0) {
+        Entities[e].state != STATE_MOVING ||
+        Entities[e].vx == 0.0) {
         footstep_timer = 0;
         return 0;
     }
@@ -136,58 +267,60 @@ fn update_footstep_sound() {
 }
 
 // ---- Abilities ----
-fn start_dash() {
-    player_vy = 0.0;
+fn start_dash(u16 e) {
+    Entities[e].vy = 0.0;
     std_sfx_play(player_dash_sfx, 15, 8, 4);
     if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
-        player_vx = -DASH_SPEED;
+        Entities[e].vx = -DASH_SPEED;
     } else {
-        player_vx = DASH_SPEED;
+        Entities[e].vx = DASH_SPEED;
     }
     dash_frames = DASH_DURATION;
-    player_state = STATE_DASHING;
+    Entities[e].state = STATE_DASHING;
 }
 
 // B pressed while airborne.
-fn air_action() {
+fn air_action(u16 e) {
     if (player_abilities & ABIL_MULTIJUMP) {
         if (air_actions < MULTIJUMP_EXTRA) {
-            player_vy = -MULTIJUMP_SPEED;
+            Entities[e].vy = -MULTIJUMP_SPEED;
             air_actions++;
             play_jump_sound();
         }
     }
     if (player_abilities & ABIL_DASH) {
         if (air_actions < 1) {
-            start_dash();
+            start_dash(e);
             air_actions++;
         }
     }
 }
 
 // Holding B while falling slows the descent.
-fn apply_glide() {
+fn apply_glide(u16 e, u8 input) {
     if (player_abilities & ABIL_GLIDE) {
-        if (pad1_held & BTN_B) {
-            if (player_vy > GLIDE_FALL_SPEED) {
-                player_vy = GLIDE_FALL_SPEED;
+        if (bit_test(input, INPUT_ACTION2_PRESSED)) {
+            if (Entities[e].vy > GLIDE_FALL_SPEED) {
+                Entities[e].vy = GLIDE_FALL_SPEED;
             }
         }
     }
 }
 
-fn try_ground_pound() {
+fn try_ground_pound(u16 e, u8 input) {
     if (player_abilities & ABIL_POUND) {
-        if (pad1_pressed & BTN_DOWN) {
+        if (vert_input(input) > 0) {
             bit_set(mode_flags, MODE_FLAG_POUNDING);
-            player_vx = 0.0;
-            player_vy = POUND_SPEED;
+            Entities[e].vy = 0.0;
+            Entities[e].vy = POUND_SPEED;
         }
     }
 }
 
 // Grab the wall you are pushing into. Returns 1 while attached.
-fn update_climb() {
+fn update_climb(u16 e, u8 input) {
+    i8 hdir = horiz_input(input);
+    i8 vdir = vert_input(input);
     bit_clear(mode_flags, MODE_FLAG_CLIMBING);
     if (wall_lock > 0) {
         wall_lock--;
@@ -195,32 +328,32 @@ fn update_climb() {
     }
     if (!(player_abilities & ABIL_CLIMB)) { return 0; }
     u8 touching = 0;
-    if (pad1_held & BTN_RIGHT) {
-        if (hit_right(PLAYER_ENT)) { touching = 1; }
+    if (hdir > 0) {
+        if (hit_right(e)) { touching = 1; }
     }
-    if (pad1_held & BTN_LEFT) {
-        if (hit_left(PLAYER_ENT)) { touching = 1; }
+    if (hdir < 0) {
+        if (hit_left(e)) { touching = 1; }
     }
     if (touching == 0) { return 0; }
 
     bit_set(mode_flags, MODE_FLAG_CLIMBING);
-    player_vy = 0.0;
-    if (pad1_held & BTN_UP) {
-        player_vy = -CLIMB_SPEED;
-    } else if (pad1_held & BTN_DOWN) {
-        player_vy = CLIMB_SPEED;
+    Entities[e].vy = 0.0;
+    if (vdir < 0) {
+        Entities[e].vy = -CLIMB_SPEED;
+    } else if (vdir > 0) {
+        Entities[e].vy = CLIMB_SPEED;
     }
-    if (pad1_pressed & BTN_B) {
+    if (bit_test(input_presses, INPUT_ACTION2_PUSHED)) {
         // Kick away from the wall.
-        player_vy = -JUMP_SPEED;
+        Entities[e].vy = -JUMP_SPEED;
         play_jump_sound();
         wall_lock = WALL_JUMP_LOCK;
         bit_clear(mode_flags, MODE_FLAG_CLIMBING);
         if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
-            player_vx = PLAYER_MAX_SPEED;
+            Entities[e].vx = PLAYER_MAX_SPEED;
             bit_clear(mode_flags, MODE_FLAG_DIRECTION);
         } else {
-            player_vx = -PLAYER_MAX_SPEED;
+            Entities[e].vx = -PLAYER_MAX_SPEED;
             bit_set(mode_flags, MODE_FLAG_DIRECTION);
         }
     }
@@ -228,8 +361,8 @@ fn update_climb() {
 }
 
 // ---- Vertical movement ----
-fn update_platformer() {
-    if (hit_down(PLAYER_ENT)) {
+fn update_platformer(u16 e) {
+    if (hit_down(e)) {
         if (!bit_test(mode_flags, MODE_FLAG_ON_GROUND)) {
             std_sfx_play(player_land_sfx, 15, 8, 5);
             footstep_timer = 0;
@@ -241,7 +374,7 @@ fn update_platformer() {
         bit_clear(mode_flags, MODE_FLAG_ON_GROUND);
     }
 
-    if (pad1_pressed & BTN_X) {
+   if (bit_test(input_presses, INPUT_ACTION4_PUSHED)){
         player_char++;
         if (player_char > CHAR_CLIMBER) {
             player_char = CHAR_JUMPER;
@@ -250,69 +383,83 @@ fn update_platformer() {
     }
 
     if (!bit_test(mode_flags, MODE_FLAG_ON_GROUND)) {
-        if (update_climb()) {
+        if (update_climb(e, input_presses)) {
             return 0;
         }
     }
 
-    if (player_state != STATE_DASHING || dash_frames == 0) {
-        player_vy += GRAVITY * player_air_res;
+    if (Entities[e].state != STATE_DASHING || dash_frames == 0) {
+        Entities[e].vy += GRAVITY * player_air_res;
     }
     if (!bit_test(mode_flags, MODE_FLAG_POUNDING)) {
-        if (player_vy > MAX_FALL) {
-            player_vy = MAX_FALL;
+        if (Entities[e].vy > MAX_FALL) {
+            Entities[e].vy = MAX_FALL;
         }
     }
 
-    if (pad1_pressed & BTN_B) {
+    if (bit_test(input_presses, INPUT_ACTION2_PUSHED)) {
         if (bit_test(mode_flags, MODE_FLAG_ON_GROUND)) {
-            player_vy = -JUMP_SPEED;
+            Entities[e].vy = -JUMP_SPEED;
             play_jump_sound();
         } else {
-            air_action();
+            air_action(e);
         }
     }
     if (!bit_test(mode_flags, MODE_FLAG_ON_GROUND)) {
-        try_ground_pound();
-        apply_glide();
+        try_ground_pound(e, input_presses);
+        apply_glide(e, input_presses);
     }
 
-    if (player_vy >= 0.0) {
+    if (Entities[e].vy >= 0.0) {
         bouncing = 0;
     }
     // Releasing jump early gives a short hop.
-    if (player_vy < -JUMP_CUT_SPEED) {
-        if (!(pad1_held & BTN_B)) {
+    if (Entities[e].vy < -JUMP_CUT_SPEED) {
+        if (bit_test(input_presses, INPUT_ACTION2_RELEASED)) {
             if (!bouncing) {
-                player_vy = -JUMP_CUT_SPEED;
+                Entities[e].vy = -JUMP_CUT_SPEED;
             }
         }
     }
 }
 
-fn update_topdown() {
-    if (pad1_held & BTN_UP) {
-        player_vy -= PLAYER_ACCEL;
-        if (player_vy < -PLAYER_MAX_SPEED) {
-            player_vy = -PLAYER_MAX_SPEED;
-        }
-    } else if (pad1_held & BTN_DOWN) {
-        player_vy += PLAYER_ACCEL;
-        if (player_vy > PLAYER_MAX_SPEED) {
-            player_vy = PLAYER_MAX_SPEED;
-        }
-    } else {
-        if (player_vy > FRICTION) {
-            player_vy -= FRICTION;
-        } else if (player_vy < -FRICTION) {
-            player_vy += FRICTION;
+fn update_topdown(u16 e) {
+    i8 v = vert_input(input_presses);
+    if (bit_test(input_presses, INPUT_VERTICAL_PRESSED)) {
+        Entities[e].vy += v * PLAYER_ACCEL;
+        //Use whatever is the equivalent of abs() in GEL
+        Entities[e].vy += v * FRICTION;
+        Entities[e].vy = clamp(Entities[e].vy, -PLAYER_MAX_SPEED, PLAYER_MAX_SPEED);
+    } else{
+        
+        if (abs(Entities[e].vy) > FRICTION) {
+            Entities[e].vy += -sign(Entities[e].vy) * FRICTION;
         } else {
-            player_vy = 0.0;
+            Entities[e].vy = 0.0;
         }
     }
+    // if (pad1_held & BTN_UP) {
+    //     player_vy -= PLAYER_ACCEL;
+    //     if (player_vy < -PLAYER_MAX_SPEED) {
+    //         player_vy = -PLAYER_MAX_SPEED;
+    //     }
+    // } else if (pad1_held & BTN_DOWN) {
+    //     player_vy += PLAYER_ACCEL;
+    //     if (player_vy > PLAYER_MAX_SPEED) {
+    //         player_vy = PLAYER_MAX_SPEED;
+    //     }
+    // } else {
+    //     if (player_vy > FRICTION) {
+    //         player_vy -= FRICTION;
+    //     } else if (player_vy < -FRICTION) {
+    //         player_vy += FRICTION;
+    //     } else {
+    //         player_vy = 0.0;
+    //     }
+    // }
 }
 
-fn update_player() {
+fn update_player(u16 e) {
     if (pad1_pressed & BTN_SELECT) {
         game_mode ^= 1;
         player_vx = 0.0;
@@ -320,18 +467,18 @@ fn update_player() {
     }
 
     if (player_state == STATE_DASHING && dash_frames > 0) {
-        update_dash();
+        update_dash(e);
     } else {
-        update_run();
+        update_run(e);
     }
 
     if (game_mode == MODE_PLATFORMER) {
-        update_platformer();
+        update_platformer(e);
     } else {
-        update_topdown();
+        update_topdown(e);
     }
 
-    move_x(PLAYER_ENT);
-    move_y(PLAYER_ENT);
-    update_footstep_sound();
+    move_x(e);
+    move_y(e);
+    update_footstep_sound(e);
 }

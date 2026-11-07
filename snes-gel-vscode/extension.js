@@ -1,7 +1,11 @@
 const vscode = require("vscode");
+const { analyze } = require("./semantic");
 
 // name -> { name, params: [{type, name, doc}], doc, file, line, isStatic }
 let index = new Map();
+let sources = new Map();
+const semanticChanged = new vscode.EventEmitter();
+const semanticTypes = ["gelU8", "gelU16", "gelI8", "gelI16", "gelF16", "gelF32", "gelEnum", "gelDefine"];
 
 const FN_RE = /^[ \t]*(static[ \t]+)?fn[ \t]+(\w+)[ \t]*\(([^)]*)\)/;
 const PARAM_TAG = /^@param\s+(\w+)\s*[-:]?\s*(.*)$/;
@@ -38,20 +42,26 @@ function parseDocument(text, file) {
 
 async function rebuildIndex() {
     const next = new Map();
+    const nextSources = new Map();
     const uris = await vscode.workspace.findFiles("**/*.gel", "**/{build,node_modules}/**");
     for (const uri of uris) {
         try {
             const doc = await vscode.workspace.openTextDocument(uri);
+            nextSources.set(uri.toString(), doc.getText());
             for (const f of parseDocument(doc.getText(), uri)) next.set(f.name, f);
-        } catch (e) { /* unreadable file: skip */ }
+        } catch (e) { console.error(`Unable to index GEL file ${uri}:`, e); }
     }
     index = next;
+    sources = nextSources;
+    semanticChanged.fire();
 }
 
 function refreshFile(doc) {
     if (doc.languageId !== "gel") return;
+    sources.set(doc.uri.toString(), doc.getText());
     for (const [k, v] of index) if (v.file.toString() === doc.uri.toString()) index.delete(k);
     for (const f of parseDocument(doc.getText(), doc.uri)) index.set(f.name, f);
+    semanticChanged.fire();
 }
 
 function signatureLabel(fn) {
@@ -92,14 +102,29 @@ function activate(context) {
     rebuildIndex();
     const watcher = vscode.workspace.createFileSystemWatcher("**/*.gel");
     watcher.onDidCreate(rebuildIndex);
+    watcher.onDidChange(rebuildIndex);
     watcher.onDidDelete(rebuildIndex);
     context.subscriptions.push(
         watcher,
+        semanticChanged,
         vscode.workspace.onDidChangeTextDocument((e) => refreshFile(e.document)),
         vscode.workspace.onDidOpenTextDocument(refreshFile)
     );
 
     const sel = { language: "gel" };
+
+    context.subscriptions.push(vscode.languages.registerDocumentSemanticTokensProvider(sel, {
+        onDidChangeSemanticTokens: semanticChanged.event,
+        provideDocumentSemanticTokens(doc) {
+            const builder = new vscode.SemanticTokensBuilder(new vscode.SemanticTokensLegend(semanticTypes));
+            const otherSources = [...sources].filter(([uri]) => uri !== doc.uri.toString()).map(([, text]) => text);
+            for (const token of analyze(doc.getText(), otherSources)) {
+                const pos = doc.positionAt(token.offset);
+                builder.push(pos.line, pos.character, token.length, semanticTypes.indexOf(token.type), 0);
+            }
+            return builder.build();
+        }
+    }, new vscode.SemanticTokensLegend(semanticTypes)));
 
     context.subscriptions.push(vscode.languages.registerHoverProvider(sel, {
         provideHover(doc, pos) {

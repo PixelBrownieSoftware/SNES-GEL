@@ -45,6 +45,24 @@ fn init_game() {
 - Metasprite editor (`tools/metasprite-editor/`): layered, animated sprites in the browser
 - VS Code extension with syntax highlighting (`snes-gel-vscode/`)
 
+The extension includes an optional **SNES-GEL Prototype** dark color theme. Select it with
+VS Code's **Preferences: Color Theme** command after installing or running the extension.
+Its explicit token colors apply only to GEL; unspecified colors, including comments, use
+VS Code's dark defaults. Editing the extension source does not update an installed VSIX;
+repackage and reinstall the extension, then reload the window to use the latest changes.
+The theme uses semantic highlighting for declared primitive variables, table fields, enum
+members and defines, including references in other workspace GEL files. Keep VS Code's
+semantic highlighting enabled; ambiguous declarations across files may remain uncolored.
+
+## Contact editor prototype
+
+Open [the contact editor](tools/contact-editor/index.html) in a browser to configure directed
+entity-type interactions for enter, stay and exit. Each cell names an existing GEL function
+that accepts `(u8 self, u8 other)`. Save or load a JSON configuration and export the generated
+`contact.gel`. Reverse interactions require separate rows. This is an authoring prototype:
+the exported file must be included in the game and its dispatchers connected to the contact
+runtime manually; it does not implement collision detection or activate the existing dispatcher.
+
 ## Quick start
 
 1. Install Python 3.10+ and `pip install lark watchdog pillow`

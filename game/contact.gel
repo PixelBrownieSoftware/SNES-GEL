@@ -1,0 +1,32 @@
+fn collect(u8 self, u8 other) {
+    gems_collected += 1;
+    Entities[other].free();
+}
+
+fn bounce(u8 self, u8 other) {
+    Entities[self].vy = -JUMP_SPEED;
+}
+
+fn entity_on_contact(u8 self, u8 other) {
+    u8 self_type = Entities[self].type;
+    u8 other_type = Entities[other].type;
+
+    switch (self_type) {
+        case PLAYER:
+            switch (other_type) {
+                case GEM:
+                    collect(self, other);
+                    break;
+                case SPRING:
+                    bounce(self, other);
+                    break;
+            }
+            break;
+    }
+}
+
+fn entity_on_stay(u8 self, u8 other) {
+}
+
+fn entity_on_exit(u8 self, u8 other) {
+}

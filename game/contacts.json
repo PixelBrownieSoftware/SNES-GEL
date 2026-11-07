@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "interactions": [
+    {
+      "self": "PLAYER",
+      "other": "GEM",
+      "enter": "collect",
+      "stay": "",
+      "exit": ""
+    },
+    {
+      "self": "PLAYER",
+      "other": "SPRING",
+      "enter": "bounce",
+      "stay": "",
+      "exit": ""
+    }
+  ],
+  "handlers": {
+    "collect": [
+      {
+        "op": "add",
+        "target": "gems_collected",
+        "value": [
+          {
+            "t": "val",
+            "text": "1"
+          }
+        ]
+      },
+      {
+        "op": "free",
+        "target": "Entities[other]"
+      }
+    ],
+    "bounce": [
+      {
+        "op": "set",
+        "target": "Entities[self].vy",
+        "value": [
+          {
+            "t": "val",
+            "text": "-JUMP_SPEED"
+          }
+        ]
+      }
+    ]
+  }
+}

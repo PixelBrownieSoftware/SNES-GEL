@@ -1,0 +1,59 @@
+{
+  "$schema": "vscode://schemas/color-theme",
+  "name": "SNES-GEL Prototype",
+  "type": "dark",
+  "semanticHighlighting": true,
+  "semanticTokenColors": {
+    "gelU8": "#A5B4FF",
+    "gelU16": "#849DFF",
+    "gelI8": "#00ED20",
+    "gelI16": "#16C431",
+    "gelF16": "#00FFD0",
+    "gelF32": "#00FFD0",
+    "gelEnum": "#FF6DCF",
+    "gelDefine": "#C514E3"
+  },
+  "tokenColors": [
+    { "scope": "storage.type.primitive.u8.gel", "settings": { "foreground": "#A5B4FF" } },
+    { "scope": "storage.type.primitive.u16.gel", "settings": { "foreground": "#849DFF" } },
+    { "scope": "storage.type.primitive.i8.gel", "settings": { "foreground": "#00ED20" } },
+    { "scope": "storage.type.primitive.i16.gel", "settings": { "foreground": "#16C431" } },
+    { "scope": "storage.type.primitive.f16.gel", "settings": { "foreground": "#00FFD0" } },
+    { "scope": "storage.type.primitive.f32.gel", "settings": { "foreground": "#00FFD0" } },
+    {
+      "scope": [
+        "storage.type.struct.gel",
+        "entity.name.type.struct.gel",
+        "variable.other.table.gel",
+        "keyword.other.gel"
+      ],
+      "settings": { "foreground": "#ED1C24" }
+    },
+    {
+      "scope": [
+        "keyword.declaration.function.gel",
+        "entity.name.function.gel",
+        "entity.name.function.call.gel"
+      ],
+      "settings": { "foreground": "#9E9575" }
+    },
+    { "scope": "keyword.control.gel", "settings": { "foreground": "#FFC90E" } },
+    {
+      "scope": ["keyword.control.directive.define.gel", "entity.name.constant.macro.gel"],
+      "settings": { "foreground": "#C514E3" }
+    },
+    {
+      "scope": ["support.function.stdlib.gel", "support.function.builtin.gel"],
+      "settings": { "foreground": "#ED810E" }
+    },
+    { "scope": "support.function.bit.gel", "settings": { "foreground": "#00E6FF" } },
+    {
+      "scope": [
+        "storage.type.enum.gel",
+        "entity.name.type.enum.gel",
+        "constant.other.enum.member.gel"
+      ],
+      "settings": { "foreground": "#FF6DCF" }
+    }
+  ]
+}

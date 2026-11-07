@@ -97,8 +97,97 @@ fn spawn_entity(u8 type, u16 ex, u16 ey, u8 param) {
                 Entities[slot].animaddr = 0;
                 Entities[slot].w = HB_W;
                 Entities[slot].h = HB_H;
+                // Entities[slot].type = PLAYER;
                 bit_set(Entities[slot].flags, ENTITY_FLAG_CONTACTABLE);
                 break;
+        }
+    }
+}
+
+#define MAX_CONTACT_PAIRS 16
+
+struct_table CollidingEntities[MAX_CONTACT_PAIRS] {
+    u8 self;
+    u8 other;
+}
+
+fn find_contact_pair(u8 e1, u8 e2) {
+    CollidingEntities.for_each(p) {
+        if (CollidingEntities[p].self == e1 && CollidingEntities[p].other == e2) {
+            return p;
+        }
+    }
+    return 0xFFFF;
+}
+
+fn add_contact_pair(u8 e1, u8 e2) {
+    CollidingEntities.create();
+    u16 slot = reg(X);
+    if (slot != 0xFFFF) {
+        CollidingEntities[slot].self = e1;
+        CollidingEntities[slot].other = e2;
+    }
+}
+
+// Directed Contact Dispatcher (Self -> Other, then Other -> Self)
+fn dispatch_contact_event(u8 e1, u8 e2, u8 phase) {
+    u8 e1_contact = bit_test(Entities[e1].flags, ENTITY_FLAG_CONTACTABLE);
+    u8 e2_contact = bit_test(Entities[e2].flags, ENTITY_FLAG_CONTACTABLE);
+
+    if (phase == 0) { // Contact Enter
+        if (e1_contact) { 
+            //entity_on_contact(e1, e2); 
+        }
+        if (e2_contact && Entities[e2].type != 0) { 
+            // entity_on_contact(e2, e1); 
+        }
+    } else if (phase == 1) { // Contact Stay
+        if (e1_contact) { 
+            // entity_on_stay(e1, e2); 
+        }
+        if (e2_contact && Entities[e2].type != 0) { 
+            // entity_on_stay(e2, e1); 
+        }
+    } else if (phase == 2) { // Contact Exit
+        if (e1_contact) { 
+            // entity_on_exit(e1, e2); 
+        }
+        if (e2_contact && Entities[e2].type != 0) { 
+            // entity_on_exit(e2, e1); 
+        }
+    }
+}
+
+fn update_entity_contacts() {
+    // 1. Process active collisions (Stay vs Exit)
+    CollidingEntities.for_each(p) {
+        u8 e1 = CollidingEntities[p].self;
+        u8 e2 = CollidingEntities[p].other;
+
+        if (Entities[e1].type == 0 || Entities[e2].type == 0) {
+            dispatch_contact_event(e1, e2, 2);
+            CollidingEntities[p].free();
+        } else if (entities_touch(e1, e2)) {
+            dispatch_contact_event(e1, e2, 1);
+        } else {
+            dispatch_contact_event(e1, e2, 2);
+            CollidingEntities[p].free();
+        }
+    }
+
+    // 2. Scan pairs for new overlaps (Enter)
+    Entities.for_each(e1) {
+        if (bit_test(Entities[e1].flags, ENTITY_FLAG_CONTACTABLE)) {
+            Entities.for_each(e2) {
+                if (e1 < e2 && bit_test(Entities[e2].flags, ENTITY_FLAG_CONTACTABLE)) {
+                    if (entities_touch(e1, e2)) {
+                        if (find_contact_pair(e1, e2) == 0xFFFF) {
+                            add_contact_pair(e1, e2);
+                            dispatch_contact_event(e1, e2, 0);
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -123,7 +212,13 @@ fn spawn_level_objects() {
         i++;
     }
 }
-
+fn entities_touch(u16 e1, u16 e2) {
+    if (Entities[e1].x >= Entities[e2].x + Entities[e2].w) { return 0; }
+    if (Entities[e1].x + Entities[e1].w <= Entities[e2].x) { return 0; }
+    if (Entities[e1].y >= Entities[e2].y + Entities[e2].h) { return 0; }
+    if (Entities[e1].y + Entities[e1].h <= Entities[e2].y) { return 0; }
+    return 1;
+}
 //Todo: This function needs to redone into a generic touch function
 // Box overlap between the player and entity e, using each one's own hitbox.
 fn player_touches(u16 e) {
@@ -136,13 +231,13 @@ fn player_touches(u16 e) {
 
 // A bouncer's point is the bottom-left of its sprite (w x h). Any falling player overlapping
 // it is launched; a ground pound launches harder.
-fn touches_bouncer(u16 e) {
-    if (Entities[e].x >= player_x + Entities[0].w) { return 0; }
-    if (Entities[e].x + Entities[e].w <= player_x) { return 0; }
-    if (player_y >= Entities[e].y) { return 0; }
-    if (player_y + Entities[0].h <= Entities[e].y - Entities[e].h) { return 0; }
-    return 1;
-}
+// fn touches_bouncer(u16 e) {
+//     if (Entities[e].x >= player_x + Entities[0].w) { return 0; }
+//     if (Entities[e].x + Entities[e].w <= player_x) { return 0; }
+//     if (player_y >= Entities[e].y) { return 0; }
+//     if (player_y + Entities[0].h <= Entities[e].y - Entities[e].h) { return 0; }
+//     return 1;
+// }
 // Gravity, ground detection and collision for any non-player entity with MODE_FLAG_PHYSICS set.
 // The player runs the same move_x / move_y through update_player.
 fn entity_physics(u16 e) {
@@ -183,18 +278,18 @@ fn update_entities() {
             }
             if (Entities[e].anim == 0) {
                 if (player_vy >= 0.0) {
-                    if (touches_bouncer(e)) {
-                        if (bit_test(mode_flags, MODE_FLAG_POUNDING)) {
-                            player_vy = -BOUNCE_HIGH;
-                        } else {
-                            player_vy = -BOUNCE_SPEED;
-                        }
-                        bit_clear(mode_flags, MODE_FLAG_POUNDING);
-                        bit_clear(mode_flags, MODE_FLAG_ON_GROUND);
-                        bouncing = 1;
-                        Entities[e].anim = 1;
-                        std_sfx_play(SFX_BOUNCE, 15, 8, 5);
-                    }
+                    // if (touches_bouncer(e)) {
+                    //     if (bit_test(mode_flags, MODE_FLAG_POUNDING)) {
+                    //         player_vy = -BOUNCE_HIGH;
+                    //     } else {
+                    //         player_vy = -BOUNCE_SPEED;
+                    //     }
+                    //     bit_clear(mode_flags, MODE_FLAG_POUNDING);
+                    //     bit_clear(mode_flags, MODE_FLAG_ON_GROUND);
+                    //     bouncing = 1;
+                    //     Entities[e].anim = 1;
+                    //     std_sfx_play(SFX_BOUNCE, 15, 8, 5);
+                    // }
                 }
             }
         }
@@ -203,15 +298,16 @@ fn update_entities() {
 
 //This function needs to go. It needs to be a generic "draw metasprite"
 fn draw_bouncer(i16 sx, i16 sy, u8 anim) {
-    u8 frame = 0;
+    u8 bouncer_frame;
+    bouncer_frame = 0;
     if (anim > 0) {
-        frame = 3;
-        if (anim > 4) { frame = 2; }
-        if (anim > 8) { frame = 1; }
+        bouncer_frame = 3;
+        if (anim > 4) { bouncer_frame = 2; }
+        if (anim > 8) { bouncer_frame = 1; }
     }
     std_draw_frame(
         MetaspriteHeader[1].frame_table,
-        frame,
+        bouncer_frame,
         sx,
         sy - SPRING_MS_OFF_Y,
         MetaspriteHeader[1].attr,
@@ -220,10 +316,11 @@ fn draw_bouncer(i16 sx, i16 sy, u8 anim) {
 }
 
 fn ms_table_off(u16 table, u8 frame) {
-    u16 p = table + (frame << 1); // Equivalent to frame + frame
+    u16 ms_table_ptr;
+    ms_table_ptr = table + (frame << 1); // Equivalent to frame + frame
     //Return lowbyte | highbyte
     //Basically-> | 0000 0000 | 0000 0000
-    return peek8(p) | (peek8(p + 1) << 8);
+    return peek8(ms_table_ptr) | (peek8(ms_table_ptr + 1) << 8);
 }
 
 #define GEM_ATTR        0x32    // OBJ palette 1, priority 3
@@ -232,45 +329,57 @@ fn ms_table_off(u16 table, u8 frame) {
 #define DRAW_MARGIN     32      // entities this far off screen are still drawn (largest metasprite)
 
 fn draw_entites(){
-    Entities.for_each(e) {
-        i16 sx = Entities[e].x - cam_x;
-        i16 sy = Entities[e].y - cam_y;
-        if (sx >= -DRAW_MARGIN && sx <= SCREEN_W && sy >= -DRAW_MARGIN && sy <= SCREEN_H) {
+    u8 draw_attr = 0;
+    i16 draw_x_pos = 0;
+    u16 draw_animaddr = 0;
+    u16 draw_off_x = 0;
+    u16 draw_off_y = 0;
+    u16 draw_anim_table = 0;
+    u16 draw_frame_table = 0;
+    i16 draw_frame_id = 0;
+    i16 draw_entity_x = 0;
+    i16 draw_entity_y = 0;
+    i16 draw_off_mirror_x = 0;
+
+    Entities.for_each(draw_e) {
+        draw_entity_x = Entities[draw_e].x - cam_x;
+        draw_entity_y = Entities[draw_e].y - cam_y;
+        if (draw_entity_x >= -DRAW_MARGIN && draw_entity_x <= SCREEN_W && draw_entity_y >= -DRAW_MARGIN && draw_entity_y <= SCREEN_H) {
             
             // Get current metasprite frame ID for this entity
-            i16 frame_id = Entities[e].anim;
+            draw_frame_id = Entities[draw_e].anim;
             
             // Draw the metasprite to OAM buffer
             // (x, y, metasprite_frame_index, attributes/palette)
-            switch (Entities[e].type) {
+            switch (Entities[draw_e].type) {
                 case OBJ_BOUNCER:
-                    draw_bouncer(sx, sy, Entities[e].anim);
+                    draw_bouncer(draw_entity_x, draw_entity_y, Entities[draw_e].anim);
                     break;
                 case OBJ_GEM:
-                    std_draw_sprite(sx, sy, PLAYER_MS_TILE_COUNT, GEM_ATTR);
+                    std_draw_sprite(draw_entity_x, draw_entity_y, PLAYER_MS_TILE_COUNT, GEM_ATTR);
                     break;
                 case OBJ_PLAYERSTART:
-                    u16 animaddr = Entities[e].animaddr;
-                    u16 anim_table = MetaspriteHeader[animaddr].anim_table;
-                    u16 frame_table = MetaspriteHeader[animaddr].frame_table;
-                    u16 off_x = MetaspriteHeader[animaddr].off_x;
-                    u16 off_y = MetaspriteHeader[animaddr].off_y;
-                    u16 off_mirror_x = MetaspriteHeader[animaddr].off_mirror_x;
-                    u8 frame =                     std_anim_frame(anim_table, Entities[e].clip, Entities[e].step);
+                    draw_animaddr = Entities[draw_e].animaddr;
+                    draw_anim_table = MetaspriteHeader[draw_animaddr].anim_table;
+                    draw_frame_table = MetaspriteHeader[draw_animaddr].frame_table;
+                    draw_off_x = MetaspriteHeader[draw_animaddr].off_x;
+                    draw_off_y = MetaspriteHeader[draw_animaddr].off_y;
+                    draw_off_mirror_x = MetaspriteHeader[draw_animaddr].off_mirror_x;
+                    draw_frame_id = std_anim_frame(draw_anim_table, Entities[draw_e].clip, Entities[draw_e].step);
                     // The artwork faces left, so facing right (flag 0) is the flipped case.
-                    u8 attr = MetaspriteHeader[animaddr].attr | OAM_HFLIP;
-                                        i16 draw_x = Entities[e].x - ms_table_off(off_mirror_x, frame);
-                                        if (bit_test(Entities[e].flags, MODE_FLAG_DIRECTION)) {
-                        bit_clear(attr, OAMB_HFLIP);
-                                            draw_x = Entities[e].x - ms_table_off(off_x, frame);
+                    draw_attr = MetaspriteHeader[draw_animaddr].attr | OAM_HFLIP;
+                    draw_x_pos = Entities[draw_e].x - ms_table_off(draw_off_mirror_x, draw_frame_id);
+                    if (bit_test(Entities[draw_e].flags, MODE_FLAG_DIRECTION)) {
+                        bit_clear(draw_attr, OAMB_HFLIP);
+                        draw_x_pos = Entities[draw_e].x - ms_table_off(draw_off_x, draw_frame_id);
                     }
                     std_draw_frame(
-                        frame_table,
-                        frame,
-                        draw_x - cam_x,
-                                            Entities[e].y - ms_table_off(off_y, frame) - cam_y,
-                        attr,
-                        MetaspriteHeader[animaddr].tile_base
+                        draw_frame_table,
+                        draw_frame_id,
+                        draw_x_pos - cam_x,
+                        Entities[draw_e].y - ms_table_off(draw_off_y, draw_frame_id) - cam_y,
+                        draw_attr,
+                        MetaspriteHeader[draw_animaddr].tile_base
                     );
                     break;
             }

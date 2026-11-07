@@ -7,6 +7,7 @@
     { "include": "#directives" },
     { "include": "#asm-block" },
     { "include": "#strings" },
+    { "include": "#enums" },
     { "include": "#declarations" },
     { "include": "#keywords" },
     { "include": "#types" },
@@ -28,14 +29,14 @@
         {
           "match": "^\\s*(#include)\\s+([\"<][^\">]+[\">])",
           "captures": {
-            "1": { "name": "keyword.control.directive.gel" },
+            "1": { "name": "keyword.control.directive.include.gel" },
             "2": { "name": "string.quoted.other.lt-gt.include.gel" }
           }
         },
         {
           "match": "^\\s*(#define)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
-            "1": { "name": "keyword.control.directive.gel" },
+            "1": { "name": "keyword.control.directive.define.gel" },
             "2": { "name": "entity.name.constant.macro.gel" }
           }
         }
@@ -47,15 +48,25 @@
         { "name": "string.quoted.single.char.gel", "match": "'[^'\\n]'" }
       ]
     },
+    "enums": {
+      "begin": "\\b(enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "beginCaptures": {
+        "1": { "name": "storage.type.enum.gel" },
+        "2": { "name": "entity.name.type.enum.gel" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.enum.end.gel" }
+      },
+      "name": "meta.enum.gel",
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#numbers" },
+        { "name": "constant.other.enum.member.gel", "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b" }
+      ]
+    },
     "declarations": {
       "patterns": [
-        {
-          "match": "\\b(enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
-          "captures": {
-            "1": { "name": "storage.type.enum.gel" },
-            "2": { "name": "entity.name.type.enum.gel" }
-          }
-        },
         {
           "match": "\\b(struct_table|struct)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
@@ -68,6 +79,13 @@
           "captures": {
             "1": { "name": "storage.modifier.extern.gel" },
             "2": { "name": "variable.other.extern.gel" }
+          }
+        },
+        {
+          "match": "\\b(fn)\\s+(std_[A-Za-z0-9_]+)",
+          "captures": {
+            "1": { "name": "keyword.declaration.function.gel" },
+            "2": { "name": "support.function.stdlib.gel" }
           }
         },
         {
@@ -105,7 +123,7 @@
       "patterns": [
         {
           "name": "keyword.control.gel",
-          "match": "\\b(if|else|switch|case|default|break|return|while)\\b"
+          "match": "\\b(if|else|switch|case|default|break|return|while|for_each)\\b"
         },
         {
           "name": "storage.modifier.gel",
@@ -113,23 +131,47 @@
         },
         {
           "name": "keyword.other.gel",
-          "match": "\\b(for_each|create|free)\\b"
+          "match": "\\b(create|free)\\b"
         }
       ]
     },
     "types": {
       "patterns": [
         {
-          "name": "storage.type.primitive.gel",
-          "match": "\\b(u8|i8|u16|i16|f16|f32)\\b"
+          "name": "storage.type.primitive.u8.gel",
+          "match": "\\bu8\\b"
+        },
+        {
+          "name": "storage.type.primitive.u16.gel",
+          "match": "\\bu16\\b"
+        },
+        {
+          "name": "storage.type.primitive.i8.gel",
+          "match": "\\bi8\\b"
+        },
+        {
+          "name": "storage.type.primitive.i16.gel",
+          "match": "\\bi16\\b"
+        },
+        {
+          "name": "storage.type.primitive.f16.gel",
+          "match": "\\bf16\\b"
+        },
+        {
+          "name": "storage.type.primitive.f32.gel",
+          "match": "\\bf32\\b"
         }
       ]
     },
     "builtins": {
       "patterns": [
         {
+          "name": "support.function.bit.gel",
+          "match": "\\b(bit|bit_set|bit_clear|bit_test)(?=\\s*\\()"
+        },
+        {
           "name": "support.function.builtin.gel",
-          "match": "\\b(bit|bit_set|bit_clear|bit_test|peek8)(?=\\s*\\()"
+          "match": "\\b(abs|clamp|sign|peek8l|peek8)(?=\\s*\\()"
         },
         {
           "name": "support.function.builtin.gel",
@@ -171,11 +213,28 @@
     "table-members": {
       "patterns": [
         {
-          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*\\[[^\\]]*\\]\\s*(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)",
-          "captures": {
+          "name": "variable.other.table.gel",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\.\\s*(?:create|free|for_each)\\s*\\()"
+        },
+        {
+          "begin": "\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(\\[)",
+          "beginCaptures": {
             "1": { "name": "variable.other.table.gel" },
-            "2": { "name": "punctuation.accessor.gel" },
-            "3": { "name": "variable.other.member.gel" }
+            "2": { "name": "punctuation.section.brackets.begin.gel" }
+          },
+          "end": "\\]",
+          "endCaptures": {
+            "0": { "name": "punctuation.section.brackets.end.gel" }
+          },
+          "patterns": [
+            { "include": "$self" }
+          ]
+        },
+        {
+          "match": "(\\.)([A-Za-z_][A-Za-z0-9_]*)\\b(?!\\s*\\()",
+          "captures": {
+            "1": { "name": "punctuation.accessor.gel" },
+            "2": { "name": "variable.other.member.gel" }
           }
         }
       ]
