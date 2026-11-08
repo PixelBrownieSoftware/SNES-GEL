@@ -1,6 +1,7 @@
 GEL Metasprite Editor (layers + animation)
 
-Windows: run start.bat to serve the editor locally and open it in your browser. The default assets
+Windows: run start.bat to start the shared GEL editor server and open the metasprite editor.
+Alternatively run tools/editor/start.bat and select Metasprite editor. The default assets
 folder is game/assets; pass another assets folder as an argument to start.bat to use a different
 project. The server reads and updates metasprite-project.json, which lists the separate
 <name>.metasprite.json files. It also discovers PNG images and converts BMP images to PNG beside

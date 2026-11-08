@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Local file server for the GEL metasprite editor."""
 
-import argparse
 import json
 import mimetypes
 import os
 import re
+import runpy
+import sys
 import tempfile
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -242,26 +243,8 @@ class EditorServer(ThreadingHTTPServer):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "assets_dir", nargs="?",
-        default=EDITOR_DIR.parents[1] / "game" / "assets",
-        help="directory containing metasprite projects and source images",
-    )
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
-    args = parser.parse_args()
-    if args.host not in ("127.0.0.1", "localhost", "::1"):
-        parser.error("The editor server must bind to loopback only.")
-    server = EditorServer((args.host, args.port), args.assets_dir)
-    print(f"Metasprite editor: http://{args.host}:{args.port}/", flush=True)
-    print(f"Assets folder: {server.assets_dir}", flush=True)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nStopping metasprite editor.")
-    finally:
-        server.server_close()
+    sys.argv.insert(1, "--legacy-assets")
+    runpy.run_path(str(EDITOR_DIR.parents[1] / "tools" / "editor" / "server.py"), run_name="__main__")
 
 
 if __name__ == "__main__":

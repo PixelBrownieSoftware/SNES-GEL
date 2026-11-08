@@ -1,6 +1,7 @@
 #include "snes.gel"
 #include "assets.gel"
 #include "sound.gel"
+#include "object-definitions.gel"
 
 // ---------------- Tuning ----------------
 #define PLAYER_ACCEL        0.15
@@ -95,36 +96,8 @@ u16 player_curr_anim = 0;
 u16 player_anim_addr = 0;
 i8 dummy_number =0;
 
-// ---------------- Level objects (from the Tiled object layer) ----------------
-// ---------------- Level data (own ROM bank) and map streaming ----------------
-// LEVEL_OBJECTS: a count byte, then 6 bytes per object: type, x (16-bit), y (16-bit), param.
-// Types are the OBJ_* constants generated from each object's Tiled Class. x/y is the top-left.
-// Level data lives in bank LEVEL_BANK; the LEVEL_* names are offsets inside it.
-#define OBJ_ENTRY_SIZE 6
-
-fn obj_addr(u8 i) {
-    return LEVEL_OBJECTS + 1 + (i << 2) + (i << 1);
-}
-
-fn obj_type(u8 i) { return peek8l(LEVEL_BANK, obj_addr(i)); }
-fn obj_param(u8 i) { return peek8l(LEVEL_BANK, obj_addr(i) + 5); }
-
-fn obj_x(u8 i) {
-    u16 p = obj_addr(i) + 1;
-    u16 lo = peek8l(LEVEL_BANK, p);
-    p++;
-    u16 hi = peek8l(LEVEL_BANK, p);
-    return lo | (hi << 8);
-}
-
-fn obj_y(u8 i) {
-    u16 p = obj_addr(i) + 3;
-    u16 lo = peek8l(LEVEL_BANK, p);
-    p++;
-    u16 hi = peek8l(LEVEL_BANK, p);
-    return lo | (hi << 8);
-}
-
+// ---------------- Level map streaming ----------------
+#include "level-data.gel"
 // The BG tilemap in VRAM is a ring of 32 rows: world row r lives in VRAM row r & 31, so the
 // hardware wraps the scroll for us. level_top is the first world row currently in the ring.
 // Moving the window down by one row replaces the row leaving the top with the one entering at
@@ -177,16 +150,6 @@ fn level_stream() {
     }
 }
 
-// Index of the first object of this type, or 255 if the level has none.
-fn obj_find(u8 type) {
-    u8 i = 0;
-    while (i < LEVEL_OBJECT_COUNT) {
-        if (obj_type(i) == type) { return i; }
-        i++;
-    }
-    return 255;
-}
-
 // ---------------- Level collision ----------------
 #define TILE_SIZE_PX                 8
 #define TILE_COORD_MASK              7
@@ -208,19 +171,6 @@ fn obj_find(u8 type) {
 #define SLOPE_BIAS_PX                8
 #define SLOPE_STEP_UP_PX             8
 #define SLOPE_SNAP_DOWN_PX           4
-
-fn collision_code_at(u16 wx, u16 wy) {
-    if (wx >= LEVEL_WIDTH_PX) { return COLLISION_SOLID; }
-    if (wy >= LEVEL_HEIGHT_PX) { return COLLISION_SOLID; }
-    return peek8l(LEVEL_BANK, LEVEL_COLL + (((wy >> TILE_COORD_SHIFT) << LEVEL_ROW_SHIFT) +
-                                           (wx >> TILE_COORD_SHIFT)));
-}
-
-// Surface height (in pixels, relative to the tile top) plus SLOPE_BIAS_PX at column wx.
-fn slope_surface_at_x(u8 code, u16 wx) {
-    return peek8l(LEVEL_BANK, LEVEL_SLOPES + ((code & SLOPE_INDEX_MASK) << SLOPE_PROFILE_SHIFT) +
-                              (wx & TILE_COORD_MASK));
-}
 
 // `code` is the collision byte already read at (wx, wy), so callers that have it avoid a second read.
 fn solid_with_code(u16 wx, u16 wy, u8 code) {
@@ -698,8 +648,10 @@ fn init_game() {
     // 4. Spawn at the level's PlayerStart object (skipped when a hot reload restored the table),
     //    then fill the level's VRAM window around the camera while the screen is still blanked.
     if (Entities[0].type == 0) {
-        spawn_player_entity();
         u8 start = obj_find(OBJ_PLAYERSTART);
+        u8 player_variant = 0;
+        if (start != 255) { player_variant = obj_param(start); }
+        spawn_player_entity(player_variant);
         if (start != 255) {
             player_x = obj_x(start);
             player_y = obj_y(start);

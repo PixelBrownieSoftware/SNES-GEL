@@ -83,7 +83,7 @@ fn update_dash(u16 e) {
     }
 }
 
-fn vert_input(u8 input) {
+fn vert_input(u8 input) -> i8 {
     i8 v = 0;
     //Bit test for vertical input
     //Dude just have a look at todo.md
@@ -97,7 +97,7 @@ fn vert_input(u8 input) {
     }
     return v;
 }
-fn horiz_input(u8 input) {
+fn horiz_input(u8 input) -> i8 {
     i8 h = 0;
     //Bit test for horizontal input
     //Dude just have a look at todo.md

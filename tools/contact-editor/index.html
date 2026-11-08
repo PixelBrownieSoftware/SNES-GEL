@@ -5,22 +5,29 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GEL Contact Editor</title>
   <link rel="stylesheet" href="editor.css">
+  <link rel="stylesheet" href="../visual-gel/editor.css?v=logical-not-1">
+  <script defer src="../visual-gel/model.js?v=define-values-1"></script>
+  <script defer src="../visual-gel/editor.js?v=define-values-1"></script>
+  <script defer src="../visual-gel/history.js"></script>
   <script defer src="model.js"></script>
   <script defer src="editor.js"></script>
 </head>
 <body>
   <main>
+    <p><a href="/">All editors</a> | <a href="/visual-gel/">Visual GEL</a> | <a href="/object-editor/">Objects</a> | <a href="/metasprite-editor/">Metasprites</a></p>
     <h1>Contact editor</h1>
     <p>Configure directed interactions: <strong>self</strong> is the recipient and <strong>other</strong> is the entity it touches. Each handler receives <code>(self, other)</code>.</p>
     <p class="notice">Prototype: exported handlers are not automatically connected to the game. Define the named functions and include the generated GEL file in your project.</p>
     <div class="toolbar">
       <button id="add" type="button">Add interaction</button>
+      <button id="undo" type="button" disabled>Undo</button>
+      <button id="redo" type="button" disabled>Redo</button>
       <button id="save-project" type="button" disabled>Save to project</button>
       <button id="save" type="button">Download JSON</button>
       <button id="load-button" type="button">Load JSON</button>
       <input id="load" type="file" accept=".json,application/json" hidden>
       <button id="export" type="button">Download contact.gel</button>
-      <button id="refresh-symbols" type="button">Rescan symbols</button>
+      <button id="refresh-symbols" type="button">Refresh objects and symbols</button>
       <span id="server-state" class="badge">Checking server...</span>
     </div>
     <div class="legend" aria-label="Colour legend">
@@ -29,13 +36,14 @@
       <span class="t-define">Defines</span> <span class="t-hw">Hardware API</span> <span class="t-bit">Bit setting</span> <span class="t-enum">Enums</span>
     </div>
     <p id="status" role="status" aria-live="polite"></p>
+    <p id="object-warning" role="status" aria-live="polite"></p>
     <div class="table-wrap">
       <table>
         <thead><tr><th>Self type</th><th>Other type</th><th>Enter handler</th><th>Stay handler</th><th>Exit handler</th><th></th></tr></thead>
         <tbody id="rows"></tbody>
       </table>
     </div>
-    <p>Use GEL constant identifiers such as <code>OBJ_BULLET</code>. Leave a handler blank when that phase has no action. The reverse direction is a separate interaction.</p>
+    <p>Recipients are contactable objects; the other participant may be any object. Existing unrecognized types are preserved until replaced. Object classes become <code>OBJ_*</code> constants when present in a built level. Leave a handler blank when that phase has no action. The reverse direction is a separate interaction.</p>
     <h2>Handler scripts</h2>
     <p>Build a handler's body from blocks. Click a <span class="t-define">[slot]</span> to search the project's tables, defines, enums, variables and functions. Handlers left empty must be written by hand.</p>
     <div id="handlers"></div>

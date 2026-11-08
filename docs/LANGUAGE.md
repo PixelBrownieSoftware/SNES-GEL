@@ -36,10 +36,20 @@ remain in their own storage, with no runtime stack allocation for locals.
 ## Functions
 
 ```
-fn add(u8 a, u8 b) { return a + b; }
+fn add(u8 a, u8 b) -> u8 { return a + b; }
+fn is_alive(u8 health) -> u8 { return health != 0; }
 static fn helper() { ... }              // used by the stdlib for internal functions
-fn fast(u8 v = reg(A)) { ... }          // parameter passed in a register
+fn init_game() { u8 sum = add(1, 2); if (is_alive(sum)) { sum += 1; } }
 ```
+
+Return annotations are optional: existing unannotated functions retain the legacy `u16`
+expression type. An annotated function must return a value on every path; a bare `return;`
+is not allowed. The compiler recognizes complete `if`/`else` and `switch`/`default` branches,
+but does not assume loops execute. `u8` results are truncated to eight bits and zero-extended;
+`i8` results are truncated and sign-extended. Other results retain their 16-bit representation.
+Numeric return expressions and assignments use existing implicit GEL behavior: there is no
+automatic integer-to-fixed-point conversion or strict type checking. Return an `f16` expression
+when a fixed-point value is intended.
 
 Inline assembly: `asm { LDA #$00 }`. Read a register: `reg(A)`.
 The ROM boots into `init_game()`, which should set up hardware and then run the main loop.

@@ -15,5 +15,5 @@ if not defined PY (
     exit /b 1
 )
 
-start "" "http://127.0.0.1:8766/"
-%PY% server.py %*
+start "" "http://127.0.0.1:8765/contact-editor/"
+%PY% ..\editor\server.py %*

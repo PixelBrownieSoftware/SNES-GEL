@@ -121,6 +121,7 @@ class Compiler:
         self.enums = {}
         self.funcs = {}
         self.func_ast = {}
+        self.func_return_types = {}
         self.func_frames = {}
         self.func_frame_cursors = {}
         self.inline_ok = {}
@@ -441,8 +442,36 @@ class Compiler:
                     params.append(Var(pname, ptype, 0))
         if name in self.funcs:
             self.error(f"Duplicate function '{name}'")
+        result = next((str(k.children[0]) for k in kids if isinstance(k, Tree) and k.data == "return_type"), None)
+        if result is not None:
+            self.check_type(result)
+            for ret in kids[-1].find_data("return_stmt"):
+                if not ret.children:
+                    self.error(f"Function '{name}' declares a return type but has a bare return", ret)
+            if not self.always_returns(kids[-1].children):
+                self.error(f"Function '{name}' must return a value on every path", item)
         self.funcs[name] = params
         self.func_ast[name] = kids[-1]
+        self.func_return_types[name] = result
+
+    @classmethod
+    def always_returns(cls, statements):
+        for statement in statements:
+            if statement.data == "return_stmt":
+                return True
+            if statement.data == "if_stmt":
+                clauses = statement.children[2:]
+                if (any(clause.data == "else_clause" for clause in clauses)
+                        and cls.always_returns(statement.children[1].children)
+                        and all(cls.always_returns(clause.children[-1].children) for clause in clauses)):
+                    return True
+            if statement.data == "switch_stmt":
+                clauses = statement.children[1:]
+                if (any(clause.data == "default_clause" for clause in clauses)
+                        and all(cls.always_returns(clause.children[1:] if clause.data == "case_clause"
+                                                   else clause.children) for clause in clauses)):
+                    return True
+        return False
 
     INLINE_MAX_NODES = 25       # always inline bodies up to this size
     INLINE_LOOP_NODES = 60      # ...or up to this size when the call site is inside a loop
@@ -1201,7 +1230,7 @@ class Compiler:
             self.want_m(16)
             self.emit(f"JSR {name}")
             self.m = 16
-        return "u16"
+        return self.func_return_types[name] or "u16"
 
     def x_table_create(self, n):
         t = self.get_table(str(n.children[0]))
@@ -1403,6 +1432,12 @@ class Compiler:
     def s_return_stmt(self, s):
         if s.children:
             self.expr(s.children[0])
+            result = self.func_return_types.get(self.fn_name)
+            if result in ("u8", "i8"):
+                self.want_m(16)
+                self.emit("AND.w #$00FF")
+                if result == "i8":
+                    self.sign_extend8()
         if self.inline_end:
             self.emit(f"JMP {self.inline_end}")
         else:

@@ -23,7 +23,8 @@ struct_table Entities[10] {
     i16 suby;
     u16 animaddr;
     u8  state;     // player_state: STATE_*
-    u8  flags;     // mode and entity flags
+    u8  flags;     // legacy mode and contact flags
+    u8  capabilities; // object-editor capability flags, separate from runtime mode state
     u8  dash;      // dash frames left
     u8  bounce;    // set by a bouncer so the short-hop cut doesn't clip the launch
     u8  djump;     // double jump used
@@ -41,7 +42,6 @@ struct_table Entities[10] {
 enum EntityFlags {
     ENTITY_FLAG_MOVABLE = 0,
     ENTITY_FLAG_GHOST = 1,
-    ENTITY_FLAG_INPUT = 2,
     ENTITY_FLAG_GRAVITY = 3,
     ENTITY_FLAG_CONTACTABLE = 4
 };
@@ -71,6 +71,7 @@ fn spawn_entity(u8 type, u16 ex, u16 ey, u8 param) {
         Entities[slot].suby  = 0;
         Entities[slot].state  = 0;
         Entities[slot].flags  = 0;
+        Entities[slot].capabilities = object_capabilities(type);
         Entities[slot].dash   = 0;
         Entities[slot].bounce = 0;
         Entities[slot].djump  = 0;
@@ -101,6 +102,7 @@ fn spawn_entity(u8 type, u16 ex, u16 ey, u8 param) {
                 bit_set(Entities[slot].flags, ENTITY_FLAG_CONTACTABLE);
                 break;
         }
+        object_apply_variant(slot, type, param);
     }
 }
 
@@ -194,12 +196,13 @@ fn update_entity_contacts() {
 
 // The player owns slot 0: it is created first, so Entities.create() returns 0. Its type is
 // OBJ_PLAYERSTART. player_x / player_y / player_vx ... in game.gel alias this slot's fields.
-fn spawn_player_entity() {
-    spawn_entity(OBJ_PLAYERSTART, 40, 186, 0);
+fn spawn_player_entity(u8 variant) {
+    spawn_entity(OBJ_PLAYERSTART, 40, 186, variant);
     Entities[0].charid = CHAR_DASHER;
     Entities[0].abil   = ABIL_DASH;
     Entities[0].w      = HB_W;
     Entities[0].h      = HB_H;
+    object_apply_variant(0, OBJ_PLAYERSTART, variant);
 }
 
 // Every level object other than PlayerStart (which only places the player) becomes an entity.

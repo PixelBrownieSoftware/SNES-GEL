@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "objects": [
+    {
+      "class": "PlayerStart",
+      "flags": {
+        "movable": true,
+        "ghost": false,
+        "gravity": true,
+        "contactable": true
+      },
+      "editable_fields": [],
+      "variants": []
+    },
+    {
+      "class": "Gem",
+      "flags": {
+        "movable": false,
+        "ghost": false,
+        "gravity": false,
+        "contactable": true
+      },
+      "editable_fields": [
+        "w",
+        "h"
+      ],
+      "variants": [
+        {
+          "id": 0,
+          "name": "coin",
+          "fields": {
+            "w": 25,
+            "h": 25
+          },
+          "values": {},
+          "metasprite_id": 1,
+          "palette_id": null
+        }
+      ]
+    },
+    {
+      "class": "Bouncer",
+      "flags": {
+        "movable": false,
+        "ghost": false,
+        "gravity": false,
+        "contactable": true
+      },
+      "editable_fields": [],
+      "variants": []
+    }
+  ]
+}

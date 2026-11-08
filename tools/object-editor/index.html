@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GEL Object Editor</title>
+  <link rel="stylesheet" href="editor.css?v=variants-3">
+  <script defer src="editor.js?v=variants-3"></script>
+</head>
+<body>
+  <main>
+    <nav><a href="/">All editors</a><a href="/contact-editor/">Contacts</a><a href="/metasprite-editor/">Metasprites</a></nav>
+    <h1>Object editor</h1>
+    <p>Define capabilities for Tiled object classes. Names match classes case-insensitively; numeric IDs are assigned by the level build.</p>
+    <p class="notice">These flags are initialized on spawned entities, but the general flag-driven physics, input and contact systems are not implemented yet. Existing game behavior is unchanged.</p>
+    <p>Variants are assigned an ID automatically. Set the Tiled object's <code>param</code> byte to that ID. Entity field overrides apply at spawn; custom values are read by shared GEL behavior. Rendering is not changed.</p>
+    <p><strong>Movable</strong> means the object can receive movement intent from a controller or behavior; it does not automatically receive player input. Forces may also move it.</p>
+    <div class="toolbar"><button id="add" type="button">Add object</button><button id="save" type="button" disabled>Save to project</button></div>
+    <p id="status" role="status" aria-live="polite"></p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Tiled class</th><th>Movable</th><th>Ghost</th><th>Gravity</th><th>Contactable</th><th></th></tr></thead>
+        <tbody id="objects"></tbody>
+      </table>
+    </div>
+  </main>
+</body>
+</html>

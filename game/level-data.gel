@@ -1,0 +1,51 @@
+// Read the packed level data produced by level_pack.py. Gameplay systems decide
+// how to use these records; this file does not create entities or upload tiles.
+// Each object record is six bytes: type, x (16-bit), y (16-bit), param.
+#define OBJ_ENTRY_SIZE 6
+
+fn obj_addr(u8 i) {
+    return LEVEL_OBJECTS + 1 + (i << 2) + (i << 1);
+}
+
+fn obj_type(u8 i) { return peek8l(LEVEL_BANK, obj_addr(i)); }
+fn obj_param(u8 i) { return peek8l(LEVEL_BANK, obj_addr(i) + 5); }
+
+fn obj_x(u8 i) {
+    u16 p = obj_addr(i) + 1;
+    u16 lo = peek8l(LEVEL_BANK, p);
+    p++;
+    u16 hi = peek8l(LEVEL_BANK, p);
+    return lo | (hi << 8);
+}
+
+fn obj_y(u8 i) {
+    u16 p = obj_addr(i) + 3;
+    u16 lo = peek8l(LEVEL_BANK, p);
+    p++;
+    u16 hi = peek8l(LEVEL_BANK, p);
+    return lo | (hi << 8);
+}
+
+// Index of the first object of this type, or 255 if the level has none.
+fn obj_find(u8 type) {
+    u8 i = 0;
+    while (i < LEVEL_OBJECT_COUNT) {
+        if (obj_type(i) == type) { return i; }
+        i++;
+    }
+    return 255;
+}
+
+// Out-of-bounds coordinates are treated as solid, as in the original reader.
+fn collision_code_at(u16 wx, u16 wy) {
+    if (wx >= LEVEL_WIDTH_PX) { return COLLISION_SOLID; }
+    if (wy >= LEVEL_HEIGHT_PX) { return COLLISION_SOLID; }
+    return peek8l(LEVEL_BANK, LEVEL_COLL + (((wy >> TILE_COORD_SHIFT) << LEVEL_ROW_SHIFT) +
+                                           (wx >> TILE_COORD_SHIFT)));
+}
+
+// Surface height relative to the tile top, plus SLOPE_BIAS_PX.
+fn slope_surface_at_x(u8 code, u16 wx) {
+    return peek8l(LEVEL_BANK, LEVEL_SLOPES + ((code & SLOPE_INDEX_MASK) << SLOPE_PROFILE_SHIFT) +
+                              (wx & TILE_COORD_MASK));
+}

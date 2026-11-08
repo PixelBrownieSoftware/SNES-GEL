@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Visual GEL Editor</title>
+  <link rel="stylesheet" href="../contact-editor/editor.css">
+  <link rel="stylesheet" href="editor.css?v=affected-functions-1">
+  <script defer src="model.js?v=define-values-1"></script>
+  <script defer src="history.js"></script>
+  <script defer src="editor.js?v=define-values-1"></script>
+  <script defer src="memory-layout.js"></script>
+  <script defer src="project-editor.js?v=affected-functions-1"></script>
+</head>
+<body>
+  <main>
+    <p><a href="/">All editors</a> | <a href="/contact-editor/">Contact editor</a></p>
+    <h1>Visual GEL editor</h1>
+    <p>Open a project GEL file and choose a function. Edit statements and control-flow headers as blocks, or add blocks inside existing bodies. Comments, assembly and unsupported source are preserved read-only.</p>
+    <p class="notice">This is an incremental editor, not full GEL coverage. Syntax is checked before saving; the game build is still needed to check symbols and types. Changes to generated contact.gel belong in the contact editor.</p>
+    <div class="editor-tabs" role="tablist" aria-label="Visual GEL views">
+      <button id="code-tab" type="button" role="tab" aria-selected="true" aria-controls="code-panel">Function editor</button>
+      <button id="declarations-tab" type="button" role="tab" aria-selected="false" aria-controls="declarations-panel" tabindex="-1">Declarations &amp; memory</button>
+    </div>
+    <section id="declarations-panel" role="tabpanel" aria-labelledby="declarations-tab" hidden>
+      <h2>Declarations &amp; memory</h2>
+      <p>Declarations are currently read-only here. Memory addresses come from the latest compiler output, not the live game; rebuild after changes. A failed build can leave this output out of date.</p>
+      <label>Filter declarations <input id="symbol-filter" type="search" placeholder="Search names"></label>
+      <button id="refresh-symbols" type="button">Refresh declarations and layout</button>
+      <p id="symbols-status" role="status" aria-live="polite"></p>
+      <section aria-labelledby="memory-heading">
+        <h3 id="memory-heading">Compiled memory sizes</h3>
+        <h4>Reported low WRAM occupancy</h4>
+        <p>Compiler-reported allocations in the 8 KiB low WRAM window ($0000–$1FFF). Unreported space is not necessarily free: stack, scratch space, function frames and other reservations are not shown in the compiler summary. MMIO is not RAM. This overview is independent of the filters and selections below.</p>
+        <div id="memory-occupancy"></div>
+        <p>Bars compare reported sizes with the largest visible item. Select items to total their sizes; MMIO is shown separately from RAM. Table fields can be interleaved, so a field's bytes may not be contiguous. Function frames and other unreported allocations are not included.</p>
+        <div class="memory-controls">
+          <label>Memory category
+            <select id="memory-category">
+              <option value="all">All reported items</option>
+              <option value="ram">RAM variables</option>
+              <option value="field">Table fields</option>
+              <option value="mask">Pool masks</option>
+              <option value="mmio">MMIO registers</option>
+            </select>
+          </label>
+          <button id="memory-select-visible" type="button">Select visible</button>
+          <button id="memory-clear" type="button">Clear selection</button>
+        </div>
+        <p id="memory-summary" role="status" aria-live="polite"></p>
+        <div id="memory-list"></div>
+      </section>
+      <div id="symbol-list"></div>
+    </section>
+    <section id="code-panel" role="tabpanel" aria-labelledby="code-tab">
+    <div class="toolbar">
+      <label>File <select id="file" aria-label="Project GEL file"></select></label>
+      <label>Function <select id="function" aria-label="Function"></select></label>
+      <button id="add-function" type="button" disabled>+ Function</button>
+      <button id="remove-function" type="button" disabled>Remove function</button>
+      <button id="reload" type="button">Reload</button>
+      <button id="undo" type="button" disabled>Undo</button>
+      <button id="redo" type="button" disabled>Redo</button>
+      <button id="save" type="button" disabled>Save function</button>
+    </div>
+    <p id="status" role="status" aria-live="polite"></p>
+    <div id="function-body"></div>
+    <div id="new-statements"></div>
+    <div id="closing"></div>
+    </section>
+  </main>
+</body>
+</html>

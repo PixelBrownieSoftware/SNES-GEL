@@ -1,0 +1,26 @@
+* { box-sizing: border-box; }
+body { margin: 0; background: #171a24; color: #e8ebf3; font: 16px system-ui, sans-serif; }
+main { max-width: 1100px; margin: auto; padding: 2rem; }
+nav, .toolbar { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
+a { color: #91caff; }
+button, input { font: inherit; }
+button { padding: .5rem .8rem; cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+.notice { padding: 1rem; border-left: 4px solid #e6b85c; background: #302a24; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; }
+th, td { padding: .75rem; border-bottom: 1px solid #414655; text-align: left; }
+input[type="text"], input[type="number"], select { width: 100%; min-width: 10rem; padding: .4rem; }
+input[type="checkbox"] { width: 1.2rem; height: 1.2rem; }
+#status { min-height: 1.5em; }
+details summary { cursor: pointer; color: #91caff; }
+.variant { margin: 1rem 0; border: 1px solid #53617b; }
+.variant label, .value-row label { display: inline-flex; flex-direction: column; gap: .3rem; margin: .4rem .8rem .4rem 0; }
+.variant button, .field-tag button { margin: .4rem; }
+.field-tag { display: inline-flex; align-items: center; margin: .25rem; padding: .2rem .4rem; background: #303a50; }
+.hint { color: #bcc7d7; }
+.t-u8 { color: #A5B4FF; } .t-u16 { color: #849DFF; }
+.t-i8 { color: #00ED20; } .t-i16 { color: #16C431; }
+.t-f16 { color: #00FFD0; }
+.variant input[class*="t-"], select option[class*="t-"] { background: #171a24; }
+.variant input[class*="t-"] { border-color: currentColor; }

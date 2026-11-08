@@ -13,6 +13,44 @@ def test_minimal_program_compiles():
     assert "JSR init_game" in asm
 
 
+@pytest.mark.parametrize("optimize", [False, True])
+def test_typed_return_sign_extension_and_fixed_arithmetic(optimize):
+    source = """
+        fn signed_value() -> i8 { return 255; }
+        fn fixed_value() -> f16 { return 1.5; }
+        i16 result;
+        f16 product;
+        fn init_game() {
+            result = signed_value();
+            if (signed_value() < 0) { result = 1; }
+            product = fixed_value() * fixed_value();
+        }
+    """
+    asm, _ = compile_src(source, optimize=optimize)
+    assert "ORA.w #$FF00" in asm
+    assert "JSR _gel_fmul" in asm
+
+
+@pytest.mark.parametrize("typ", ["u8", "i8", "u16", "i16", "f16"])
+def test_return_type_accepts_supported_types(typ):
+    asm, _ = compile_src(f"fn value() -> {typ} {{ return 1; }} fn init_game() {{ value(); }}", optimize=False)
+    body = asm.split("value:")[1].split("RTS")[0]
+    assert ("AND.w #$00FF" in body) == (typ in ("u8", "i8"))
+    assert ("ORA.w #$FF00" in body) == (typ == "i8")
+
+
+def test_typed_return_requires_values_on_all_paths():
+    with pytest.raises(Exception, match="bare return"):
+        compile_src("fn f() -> u8 { return; }")
+    with pytest.raises(Exception, match="every path"):
+        compile_src("fn f() -> u8 { if (1) { return 1; } }")
+    compile_src("fn f(u8 x) -> u8 { if (x) { return 1; } else { return 2; } }")
+    compile_src("fn f(u8 x) -> u8 { switch (x) { case 0: return 1; break; default: return 2; } }")
+    compile_src("fn legacy() { return; }")
+    with pytest.raises(Exception, match="f32"):
+        compile_src("fn f() -> f32 { return 1; }")
+
+
 def test_globals_and_symbols_listed():
     asm, _ = compile_src("u8 lives = 3;\nfn init_game() { lives = lives + 1; }")
     assert "; ram  u8  lives @ $" in asm

@@ -21,7 +21,7 @@ Make it so that all entites have flags such as:
 - Movable: Entities can move and have a velocity of where they will go. In an entity without gravity, they can move wherever they want. Without input, the movable can have no thought of its own. They can only be moved by something else i.e. another entity or a object that represents a force vector.
 - Gravity: Entities obey the laws of gravity. They can fall. Ones that don't can potentially fly. Flying and swimming would pretty much be the same mechanic.
 - Ghost: Entities can go through walls and other entites (in a physicis way, not a contactable way). Ghosts can still contact entities and trigger whatever the event is.
-- Inputable: Entities can be controlled by an input vector.
+- Movable entities may receive movement intent from a controller or behavior; there is no separate Inputable flag.
 With the contactable, they may be assigned a resuable interaction type/handler when in contact with another entity. My strategy to looking at this is "Divide and conquer". Instead of thinking in terms of bullets, players, throwables, coins - I think in terms of their very simple components.
 The flags need to be able to be combined with each other in every single way.
 A bullet is a contactable entity that moves, but dosen't obey gravity.

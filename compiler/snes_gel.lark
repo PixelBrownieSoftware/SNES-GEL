@@ -37,7 +37,8 @@ enum_decl: "enum" IDENTIFIER "{" enum_member ("," enum_member)* ","? "}" ";"?
 enum_member: IDENTIFIER ("=" NUMBER)?
 
 // --- Functions ---
-function_decl: static_kw? "fn" IDENTIFIER "(" param_list? ")" block
+function_decl: static_kw? "fn" IDENTIFIER "(" param_list? ")" return_type? block
+return_type: "->" TYPE
 static_kw: "static"
 param_list: param ("," param)*
 param: TYPE IDENTIFIER ("=" reg_hint)?

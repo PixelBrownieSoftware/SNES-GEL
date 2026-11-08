@@ -6,11 +6,12 @@ exposes a symbol index (tables, enums, defines, functions, globals) scanned from
 the project's .gel files so the visual code editor can offer real names.
 """
 
-import argparse
 import json
 import os
 import re
+import runpy
 import tempfile
+from functools import lru_cache
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -25,6 +26,20 @@ TYPES = ("u8", "u16", "i8", "i16", "f16", "f32")
 BIT_FUNCTIONS = ["bit", "bit_set", "bit_clear", "bit_test"]
 BUILTINS = ["abs", "clamp", "sign", "peek8l", "peek8"]
 INPUT_VARIABLES = {"pad1_held": "u16", "pad1_pressed": "u16", "pad1_prev": "u16"}
+
+
+@lru_cache(maxsize=1)
+def gel_parser():
+    from gel_parser import load_parser
+    return load_parser()
+
+
+def check_gel_syntax(code):
+    from lark import UnexpectedInput
+    try:
+        gel_parser().parse(code)
+    except UnexpectedInput as error:
+        raise ValueError(f"GEL syntax error at line {error.line}, column {error.column}: {error.get_context(code).strip()}") from error
 
 IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
 MASK = re.compile(r'^[ \t]*#include[^\r\n]*|//[^\r\n]*|/\*.*?\*/|"[^"\r\n]*"|\'[^\'\r\n]*\'|\basm\s*\{[^}]*\}',
@@ -72,10 +87,13 @@ def scan_source(text, symbols, source):
                     if tokens[j] in TYPES and j + 1 < len(tokens):
                         params.append(f"{tokens[j]} {tokens[j + 1]}")
                     j += 1
+            result_type = None
+            if j + 3 < len(tokens) and tokens[j + 1:j + 3] == ["-", ">"] and tokens[j + 3] in TYPES:
+                result_type = tokens[j + 3]
             if name.startswith("std_"):
                 symbols["hardware"].add(name)
-            else:
-                symbols["functions"][name] = {"params": params, "source": source}
+            if not name.startswith("std_") or result_type:
+                symbols["functions"][name] = {"params": params, "source": source, "returnType": result_type}
             while j < len(tokens) and tokens[j] != "{":
                 j += 1
             if j < len(tokens):
@@ -102,10 +120,20 @@ def scan_source(text, symbols, source):
             while j < len(tokens) and tokens[j] != "{":
                 j += 1
             members = symbols["enums"].setdefault(enum_name, [])
+            value = 0
             j += 1
             while j < len(tokens) and tokens[j] != "}":
                 if tokens[j - 1] in ("{", ",") and re.fullmatch(IDENT, tokens[j]):
                     members.append(tokens[j])
+                    if j + 1 < len(tokens) and tokens[j + 1] == "=":
+                        assigned = tokens[j + 2] if j + 2 < len(tokens) else ""
+                        if re.fullmatch(r"0x[0-9a-fA-F]+|[0-9]+", assigned):
+                            value = int(assigned, 16 if assigned.lower().startswith("0x") else 10)
+                        else:
+                            value = None
+                    if value is not None:
+                        symbols["enum_values"][tokens[j]] = value
+                        value += 1
                 j += 1
             i = j + 1
             continue
@@ -122,7 +150,7 @@ def scan_source(text, symbols, source):
 
 def build_symbols(project_dir):
     symbols = {
-        "tables": {}, "enums": {}, "defines": set(), "define_values": {}, "functions": {},
+        "tables": {}, "enums": {}, "enum_values": {}, "defines": set(), "define_values": {}, "functions": {},
         "globals": dict(INPUT_VARIABLES), "hardware": set(BUILTINS),
     }
     stdlib = ROOT / "compiler" / "stdlib"
@@ -139,10 +167,12 @@ def build_symbols(project_dir):
     for name in list(symbols["functions"]):
         if symbols["functions"][name]["source"] == "stdlib":
             symbols["hardware"].add(name)
-            del symbols["functions"][name]
+            if not symbols["functions"][name]["returnType"]:
+                del symbols["functions"][name]
     return {
         "tables": symbols["tables"],
         "enums": symbols["enums"],
+        "enumValues": symbols["enum_values"],
         "defines": sorted(symbols["defines"]),
         "defineValues": symbols["define_values"],
         "functions": symbols["functions"],
@@ -214,6 +244,7 @@ class EditorHandler(SimpleHTTPRequestHandler):
             if (not isinstance(config, dict) or config.get("version") != 1
                     or not isinstance(config.get("interactions"), list) or not isinstance(code, str)):
                 raise ValueError("Expected a version 1 contact configuration and generated GEL.")
+            check_gel_syntax(code)
             atomic_write(self.server.project_dir / CONFIG_NAME,
                          (json.dumps(config, indent=2) + "\n").encode("utf-8"))
             atomic_write(self.server.project_dir / OUTPUT_NAME, code.encode("utf-8"))
@@ -232,23 +263,7 @@ class EditorServer(ThreadingHTTPServer):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("project_dir", nargs="?", default=ROOT / "game",
-                        help="game folder containing .gel files; contacts.json and contact.gel are saved here")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8766)
-    args = parser.parse_args()
-    if args.host not in ("127.0.0.1", "localhost", "::1"):
-        parser.error("The editor server must bind to loopback only.")
-    server = EditorServer((args.host, args.port), args.project_dir)
-    print(f"Contact editor: http://{args.host}:{args.port}/", flush=True)
-    print(f"Project folder: {server.project_dir}", flush=True)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nStopping contact editor.")
-    finally:
-        server.server_close()
+    runpy.run_path(str(ROOT / "tools" / "editor" / "server.py"), run_name="__main__")
 
 
 if __name__ == "__main__":

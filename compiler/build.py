@@ -23,6 +23,7 @@ sys.path.insert(0, COMPILER_DIR)
 
 from gel_codegen import compile_gel  # noqa: E402
 from build_cache import StageCache, make_key  # noqa: E402
+import object_definitions  # noqa: E402
 
 ASAR_DIR = os.path.join(ROOT, "tools", "asar")
 EXE_SUFFIX = ".exe" if sys.platform == "win32" else ""
@@ -411,6 +412,31 @@ def build():
 
     # 2. Compile game.gel to Assembly
     print("[2/4] Compiling 'game.gel' to 65C816 Assembly...")
+    try:
+        objects = object_definitions.load(os.path.join(PROJECT, "objects.json"))
+        asset_header = os.path.join(BUILD, "assets.gel")
+        if os.path.isfile(asset_header):
+            with open(asset_header, encoding="utf-8") as f:
+                asset_source = f.read()
+        else:
+            asset_source = ""
+        generated = object_definitions.generate(objects, asset_source)
+        with open(os.path.join(BUILD, "object-definitions.gel"), "w", encoding="utf-8") as f:
+            f.write(generated)
+        if any(obj.get("editable_fields") for obj in objects["objects"]):
+            from gel_parser import parse_gel_code
+            with open(game_file, encoding="utf-8") as f:
+                object_tree = parse_gel_code(f.read(), PROJECT, [BUILD])
+            if object_tree is None:
+                raise ValueError("Cannot validate editable entity fields: game GEL syntax is invalid.")
+            fields = object_definitions.entity_fields(object_tree)
+            object_definitions.validate_fields(objects, fields)
+            generated = object_definitions.generate(objects, asset_source, fields)
+            with open(os.path.join(BUILD, "object-definitions.gel"), "w", encoding="utf-8") as f:
+                f.write(generated)
+        variant_asm = object_definitions.generate_asm(objects, asset_source)
+    except (OSError, ValueError) as e:
+        fail(f"Object definitions: {e}")
     with open(game_file, "r") as f:
         gel_code = f.read()
 
@@ -422,7 +448,7 @@ def build():
     except Exception as e:
         fail(f"GEL Compilation Error:\n{e}")
 
-    asm_code += "\n_gel_code_end:\n"
+    asm_code += "\n" + variant_asm + "\n_gel_code_end:\n"
     uses_sound = re.search(r"\b(?:JSR|JMP)\s+gel_snd_\w+", asm_code) is not None
     if uses_sound:
         asm_code += sound_asm(soundbank)

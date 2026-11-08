@@ -1,7 +1,9 @@
 """End-to-end build tests: they run the real build.py on a tiny generated project.
 Skipped where the Asar DLL can't be used (it ships as a Windows DLL)."""
 import hashlib
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -52,6 +54,48 @@ def run_build(project, *flags):
     r = subprocess.run([sys.executable, BUILD_PY, str(project), *flags],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     return r.returncode, r.stdout + r.stderr
+
+
+def test_build_links_variant_data_and_initializers(project):
+    level = {
+        "width": 32, "height": 32, "tilewidth": 8, "tileheight": 8,
+        "layers": [
+            {"type": "tilelayer", "name": "Tile Layer 1", "data": [0] * 1024},
+            {"type": "objectgroup", "name": "objects", "objects": [
+                {"id": 1, "class": "Gem", "x": 8, "y": 16,
+                 "properties": [{"name": "param", "type": "int", "value": 2}]}]}],
+        "tilesets": [{"firstgid": 1, "tilewidth": 8, "tileheight": 8, "tiles": []}],
+    }
+    (project / "assets" / "level.tmj").write_text(json.dumps(level), encoding="utf-8")
+    objects = {"version": 1, "objects": [{
+        "class": "Gem", "flags": {"movable": False, "ghost": False, "gravity": False, "contactable": True},
+        "editable_fields": ["w", "vx"], "variants": [{
+            "id": 2, "name": "Health", "fields": {"w": 20, "vx": 1},
+            "values": {"heal_amount": 20}, "metasprite_id": None, "palette_id": None}]}]}
+    (project / "objects.json").write_text(json.dumps(objects), encoding="utf-8")
+    (project / "game.gel").write_text("""
+        #include "assets.gel"
+        #include "object-definitions.gel"
+        struct_table Entities[4] { u8 w; f16 vx; }
+        u16 heal;
+        fn init_game() {
+            object_apply_variant(0, OBJ_GEM, 2);
+            heal = object_variant_value(OBJ_GEM, 2, OBJECT_VALUE_HEAL_AMOUNT);
+        }
+    """, encoding="utf-8")
+    rc, out = run_build(project, "--release")
+    assert rc == 0, out
+    gel = (project / "build" / "object-definitions.gel").read_text()
+    assert "Entities[slot].vx = 1.0;" in gel
+    sym = (project / "build" / "game.sym").read_text()
+    match = re.search(r"^([0-9A-Fa-f]{6}) _gel_object_variant_values$", sym, re.MULTILINE)
+    assert match
+    address = int(match.group(1), 16)
+    assert address >> 16 == 0x80
+    rom = (project / "build" / "game.sfc").read_bytes()
+    offset = (address & 0xFFFF) - 0x8000
+    assert rom[offset:offset + 5] == bytes([1, 2, 3, 20, 0])
+    assert (project / "build" / "level_objects.bin").read_bytes() == bytes([1, 1, 8, 0, 16, 0, 2])
 
 
 def rom_hash(project):
