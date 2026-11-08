@@ -1002,7 +1002,7 @@
     if (ui.tool === "anchor") {
       pushUndo();
       ui.drag = { kind: "anchor" };
-      setAnchor(pt, e.shiftKey);
+      setAnchor(pt);
       return;
     }
     if (!curLayer()) return;
@@ -1051,15 +1051,13 @@
     return f.anchor;
   }
 
-  function setAnchor(pt, snapToTile = false) {
+  const snapTile = (value) => Math.round(value / TS) * TS;
+
+  function setAnchor(pt) {
     if (ui.activeAnchor === "layer") {
       const f = curFrame();
       if (!f || !curLayer()) return;
-      const snapOffset = (value) => {
-        const pixel = Math.round(value);
-        return snapToTile ? Math.round(pixel / TS) * TS : pixel;
-      };
-      const x = snapOffset(pt.x), y = snapOffset(pt.y);
+      const x = snapTile(pt.x), y = snapTile(pt.y);
       f.layerAnchors = model.layers.map((_, li) => li === ui.layer ? { x, y } : layerOff(f, li));
       renderLayers();
       renderStage();
@@ -1094,7 +1092,7 @@
       return;
     }
     if (d.kind === "erase") eraseAt(pt);
-    else if (d.kind === "anchor") setAnchor(pt, e.shiftKey);
+    else if (d.kind === "anchor") setAnchor(pt);
     else if (d.kind === "stamp") stampStep(pt);
     else if (d.kind === "marquee") {
       d.b = pt;
@@ -1416,7 +1414,7 @@
     if (Array.isArray(f.layerAnchors)) {
       extras.layerAnchors = model.layers.map((_, li) => {
         const a = Pack.layerOffset(f, li);
-        return { x: Math.round(a.x), y: Math.round(a.y) };
+        return { x: snapTile(a.x), y: snapTile(a.y) };
       });
     }
     if (Array.isArray(f.order)) extras.order = Pack.layerOrder(f, model.layers.length);
@@ -1782,7 +1780,7 @@
   function setLayerAnchor() {
     const f = curFrame();
     if (!f || !curLayer()) return;
-    const x = int($("layer-anchor-x").value), y = int($("layer-anchor-y").value);
+    const x = snapTile(int($("layer-anchor-x").value)), y = snapTile(int($("layer-anchor-y").value));
     const cur = layerOff(f, ui.layer);
     if (x !== cur.x || y !== cur.y) {
       pushUndo();
@@ -1897,8 +1895,7 @@
         pushUndo();
         if (ui.activeAnchor === "layer") {
           const current = layerOff(curFrame(), ui.layer);
-          const step = e.shiftKey ? TS : 1;
-          setAnchor({ x: current.x + d[0] * step, y: current.y + d[1] * step });
+          setAnchor({ x: current.x + d[0] * TS, y: current.y + d[1] * TS });
         } else {
           const t = anchorTarget();
           t.x += d[0]; t.y += d[1];
