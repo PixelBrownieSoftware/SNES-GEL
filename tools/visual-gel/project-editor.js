@@ -23,7 +23,7 @@
     const visual = createVisualGelEditor({ status });
     const { el, renderBlocks, addBar } = visual;
     let documentData = null, symbols = null, memory = null, selected = -1;
-    let blocks = [], additions = [], initial = "", history = null, restoring = false;
+    let blocks = [], additions = [], commentEdits = {}, activeLocals = [], activeLocalTypes = {}, initial = "", history = null, restoring = false;
 
     const tabs = [document.getElementById("code-tab"), document.getElementById("declarations-tab")];
     function selectTab(tab) {
@@ -174,8 +174,7 @@
         section("Declared globals",
             Object.entries(symbols.globals).filter(([name]) => matches(name))
                 .map(([name, type]) => `${type} ${name}`));
-        if (selected >= 0) section("Locals and parameters in selected function",
-            documentData.functions[selected].locals.filter(matches));
+        if (selected >= 0) section("Locals and parameters in selected function", activeLocals.filter(matches));
         section("Enums", Object.entries(symbols.enums).flatMap(([name, values]) =>
             matches(name) ? [`${name}: ${values.join(", ")}`] :
                 values.filter(matches).map(value => `${name}: ${value}`)));
@@ -238,7 +237,7 @@
     });
     document.getElementById("refresh-symbols").addEventListener("click", refreshSymbols);
 
-    function snapshot() { return { blocks, additions }; }
+    function snapshot() { return { blocks, additions, comments: commentEdits, locals: activeLocals, localTypes: activeLocalTypes }; }
     function dirty() { return history && JSON.stringify(snapshot()) !== initial; }
     function changed(rebuild) {
         if (!restoring) history.record(snapshot());
@@ -247,47 +246,117 @@
         save.disabled = documentData.name === "contact.gel" || !dirty();
         if (rebuild) render();
     }
+    function renameLocal(oldName, newName) {
+        for (const list of blocks) VisualGelModel.renameVariableReferences(list, oldName, newName);
+        VisualGelModel.renameVariableReferences(additions, oldName, newName);
+        const index = activeLocals.indexOf(oldName);
+        if (index >= 0) activeLocals[index] = newName;
+        if (Object.prototype.hasOwnProperty.call(activeLocalTypes, oldName)) {
+            activeLocalTypes[newName] = activeLocalTypes[oldName];
+            delete activeLocalTypes[oldName];
+        }
+        visual.setLocals(activeLocals, activeLocalTypes);
+        visual.setIndex(visual.buildIndex(symbols));
+        renderSymbols();
+    }
+    visual.setLocalRenameHandler(renameLocal);
     function restore(value) {
         if (!value) return;
         blocks = value.blocks;
         additions = value.additions;
+        commentEdits = value.comments || {};
+        activeLocals = value.locals || [];
+        activeLocalTypes = value.localTypes || {};
+        visual.setLocals(activeLocals, activeLocalTypes);
+        visual.setIndex(visual.buildIndex(symbols));
         visual.resetSelection();
+        renderSymbols();
         restoring = true;
         try { changed(true); } finally { restoring = false; }
     }
     function raw(text, container = body) {
         if (!text.trim()) return;
+        const commentLine = /^\s*(\/\/.*|\/\*.*|\*.*|.*\*\/)$/;
+        if (text.split(/\r?\n/).every(line => !line.trim() || commentLine.test(line))) {
+            const note = el("div", "source-comment", text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).join("\n"));
+            note.setAttribute("aria-label", "Comment");
+            container.append(note);
+            return;
+        }
         const pre = el("pre", "preserved-source", text);
         pre.setAttribute("aria-label", "Preserved GEL source");
         container.append(pre);
     }
-    function renderLayout(items, container, fn) {
+    function commentBody(source) {
+        return source.startsWith("//") ? source.slice(2).trim() : source.slice(2, -2).trim();
+    }
+    function renderComment(index, container, fn) {
+        if (commentEdits[index] === null) return;
+        const original = fn.comments[index].text;
+        const line = original.startsWith("//");
+        const value = index in commentEdits ? commentEdits[index] : commentBody(original);
+        const row = el("div", "source-comment");
+        row.append(el("span", "comment-mark", line ? "//" : "/*"));
+        const field = el(line ? "input" : "textarea", "comment-input");
+        field.value = value;
+        field.setAttribute("aria-label", "Comment");
+        if (!line) field.rows = Math.max(1, value.split("\n").length);
+        field.addEventListener("change", () => {
+            const next = line ? field.value.replace(/[\r\n]+/g, " ") : field.value;
+            if (next.includes("*/") && !line) { status.textContent = "A comment cannot contain */."; field.value = value; return; }
+            if (next === commentBody(original)) delete commentEdits[index]; else commentEdits[index] = next;
+            changed(true);
+        });
+        const remove = el("button", "icon tiny", "✕"); remove.type = "button"; remove.title = "Delete this comment";
+        remove.addEventListener("click", () => { commentEdits[index] = null; changed(true); });
+        row.append(field, remove);
+        container.append(row);
+    }
+    function movable() { return documentData && documentData.name !== "contact.gel" && !(documentData.functions[selected] || {}).error; }
+    function renderLayout(items, container, fn, blockId = null) {
+        const zones = blockId !== null && blockId !== undefined && movable();
         for (const item of items) {
-            if (item.kind === "raw") {
-                raw(item.text, container);
+            if (zones && item.unit !== undefined) container.append(visual.sourceZone(blockId, item.unit));
+            if (item.kind === "comment") {
+                renderComment(item.index, container, fn);
+            } else if (item.kind === "raw") {
+                if (zones && item.unit !== undefined) {
+                    const wrap = el("div", "block existing-raw");
+                    wrap.append(visual.sourceHandle(item.unit, wrap));
+                    raw(item.text, wrap);
+                    container.append(wrap);
+                } else raw(item.text, container);
             } else if (item.kind === "label") {
                 container.append(el("div", "t-ctl else-label", item.text));
             } else if (item.kind === "part") {
                 const statement = fn.statements[item.index];
                 const host = el("div", "editable-statement");
-                renderBlocks(blocks[item.index], host, changed, statement.fixed);
+                renderBlocks(blocks[item.index], host, changed, statement.fixed, undefined, zones && item.unit !== undefined ? item.unit : null);
                 container.append(host);
                 if (statement.insertion) {
                     container.append(el("div", "insertion-label", statement.label), addBar(blocks[item.index], changed));
                 }
             } else if (item.kind === "control") {
                 const control = el("div", `block block-${item.style} existing-control`);
+                if (zones && item.unit !== undefined) {
+                    control.append(visual.sourceHandle(item.unit, control));
+                    control.append(removeButton("Remove this block and everything inside it", () => removeCode({ units: [item.unit] }, "this block and everything inside it")));
+                }
                 for (const branch of item.branches) {
                     const section = el("div", "existing-branch");
-                    renderLayout(branch.items, section, fn);
+                    if (zones && item.style === "cases" && branch.block !== undefined && branch.block !== null) {
+                        section.append(removeButton("Remove this case and its code", () => removeCode({ case: branch.block }, "this case and its code")));
+                    }
+                    renderLayout(branch.items, section, fn, null);
                     const nested = el("div", "block-body");
-                    renderLayout(branch.body, nested, fn);
+                    renderLayout(branch.body, nested, fn, branch.block ?? null);
                     section.append(nested);
                     control.append(section);
                 }
                 container.append(control);
             }
         }
+        if (zones) container.append(visual.sourceZone(blockId, null));
     }
     function render() {
         body.replaceChildren();
@@ -312,7 +381,7 @@
             showParameterEditor(fn, editParams);
         });
         body.append(signature, editParams);
-        renderLayout(fn.display, body, fn);
+        renderLayout(fn.display, body, fn, fn.rootBlock ?? null);
         const heading = el("h2", "", "Add statements at the end of this function");
         const container = el("div", "block-body");
         renderBlocks(additions, container, changed);
@@ -485,12 +554,119 @@
         host.showModal();
     }
 
-    function selectFunction(index) {
-        selected = index;
+    async function moveRequest(ids, extra) {
+        if (dirty()) throw new Error("Save or undo edits before moving existing code.");
+        return request("/api/gel-moves", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: documentData.name, hash: documentData.hash, function: selected, units: ids, ...extra })
+        });
+    }
+    async function removeCode(what, label, confirmed = false) {
+        if (dirty()) { status.textContent = "Save or undo edits before removing existing code."; return; }
+        if (!confirmed && !window.confirm(`Remove ${label}?`)) return;
+        try {
+            const data = await request("/api/gel-moves", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: documentData.name, hash: documentData.hash, function: selected, delete: true, ...what })
+            });
+            const index = selected;
+            documentData = data;
+            selectFunction(index);
+            functionSelect.value = String(index);
+            status.textContent = "Removed.";
+        } catch (error) { status.textContent = error.message; }
+    }
+    function removeButton(title, fn) {
+        const button = el("button", "icon tiny remove-existing", "✕");
+        button.type = "button"; button.title = title; button.setAttribute("aria-label", title);
+        button.addEventListener("click", fn);
+        return button;
+    }
+    const clipboardList = document.getElementById("clipboard-list");
+    const clipboardClear = document.getElementById("clipboard-clear");
+    let clipboard = [];
+    let clipboardId = 0;
+    try {
+        clipboard = JSON.parse(sessionStorage.getItem("visual-gel-clipboard") || "[]")
+            .filter(entry => entry && Array.isArray(entry.lines) && entry.lines.every(line => typeof line === "string"));
+        clipboardId = clipboard.reduce((top, entry) => Math.max(top, entry.id || 0), 0);
+    } catch (error) { clipboard = []; }
+    function renderClipboard() {
+        try { sessionStorage.setItem("visual-gel-clipboard", JSON.stringify(clipboard)); } catch (error) { /* storage unavailable */ }
+        clipboardClear.disabled = !clipboard.length;
+        clipboardList.replaceChildren();
+        if (!clipboard.length) { clipboardList.append(el("p", "", "The clipboard is empty.")); return; }
+        for (const entry of clipboard) {
+            const row = el("div", "clipboard-entry");
+            row.append(el("strong", "", `${entry.count} statement${entry.count === 1 ? "" : "s"}`));
+            row.append(el("pre", "preserved-source", entry.lines.join("\n")));
+            const paste = el("button", "", "Paste"); paste.type = "button";
+            paste.title = "Paste before the single ticked statement, or at the end of the function";
+            paste.addEventListener("click", () => pasteEntry(entry));
+            const remove = el("button", "danger", "Remove"); remove.type = "button";
+            remove.title = "Remove this entry from the clipboard";
+            remove.addEventListener("click", () => {
+                clipboard = clipboard.filter(item => item !== entry);
+                renderClipboard();
+            });
+            row.append(paste, remove);
+            clipboardList.append(row);
+        }
+    }
+    clipboardClear.addEventListener("click", () => { clipboard = []; renderClipboard(); });
+    async function copyToClipboard(ids, cut) {
+        try {
+            const data = await moveRequest(ids, { copy: true });
+            clipboard.push({ id: ++clipboardId, count: data.count, lines: data.lines });
+            renderClipboard();
+            if (cut) await removeCode({ units: ids }, "", true);
+            if (cut && status.textContent === "Removed.") status.textContent = "Cut to the clipboard.";
+            else if (!cut) status.textContent = "Copied to the clipboard.";
+        } catch (error) { status.textContent = error.message; }
+    }
+    async function pasteEntry(entry) {
+        if (selected < 0 || !documentData || !movable()) { status.textContent = "Open an editable function to paste into."; return; }
+        if (dirty()) { status.textContent = "Save or undo edits before pasting."; return; }
+        const picked = visual.selectedUnits();
+        if (picked.length > 1) { status.textContent = "Tick only one statement (paste goes before it), or none to paste at the end."; return; }
+        const root = documentData.functions[selected].rootBlock;
+        const target = picked.length ? { before: picked[0] } : { block: root, before: null };
+        try {
+            const data = await request("/api/gel-moves", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name: documentData.name, hash: documentData.hash, function: selected, paste: true, lines: entry.lines, target })
+            });
+            const index = selected;
+            documentData = data;
+            selectFunction(index);
+            functionSelect.value = String(index);
+            status.textContent = "Pasted. Build the game to check symbols and types.";
+        } catch (error) { status.textContent = error.message; }
+    }
+    renderClipboard();
+
+    visual.setSourceMover({
+        copy: copyToClipboard,
+        remove: ids => removeCode({ units: ids }, `${ids.length} selected statement${ids.length === 1 ? "" : "s"}`),
+        preview: ids => moveRequest(ids, { preview: true }),
+        async apply(ids, target) {
+            const data = await moveRequest(ids, { target });
+            const index = selected;
+            documentData = data;
+            selectFunction(index);
+            functionSelect.value = String(index);
+            status.textContent = "Moved.";
+        }
+    });
+
+    function selectFunction(index) {        selected = index;
         removeFunction.disabled = index < 0 || !documentData || documentData.name === "contact.gel";
         visual.resetSelection();
         if (index < 0) {
             blocks = []; additions = []; history = null;
+            activeLocals = []; activeLocalTypes = {};
+            visual.setLocals(activeLocals, activeLocalTypes);
+            visual.setIndex(visual.buildIndex(symbols || {}));
             undo.disabled = redo.disabled = save.disabled = true;
             status.textContent = "Choose a function.";
             renderSymbols();
@@ -498,7 +674,9 @@
             return;
         }
         const fn = documentData.functions[index];
-        visual.setLocals(fn.locals, fn.localTypes);
+        activeLocals = [...fn.locals];
+        activeLocalTypes = { ...fn.localTypes };
+        visual.setLocals(activeLocals, activeLocalTypes);
         visual.setIndex(visual.buildIndex(symbols));
         blocks = fn.statements.map(item => {
             if (item.insertion) return [];
@@ -507,6 +685,7 @@
             return [stmt];
         });
         additions = [];
+        commentEdits = {};
         history = createVisualGelHistory(snapshot());
         initial = JSON.stringify(snapshot());
         undo.disabled = redo.disabled = save.disabled = true;
@@ -645,10 +824,11 @@
             });
             const extra = code(additions);
             const addition = extra ? newline + extra.split("\n").map(line => "    " + line).join(newline) + newline : "";
+            const comment_changes = Object.entries(commentEdits).map(([index, text]) => ({ index: Number(index), text }));
             const data = await request("/api/gel-files", {
                 method: "POST", headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name: documentData.name, hash: documentData.hash,
-                    function: selected, changes, addition })
+                    function: selected, changes, addition, comment_changes })
             });
             documentData = data;
             selectFunction(selected);

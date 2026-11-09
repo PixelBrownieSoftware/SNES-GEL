@@ -1,7 +1,7 @@
 {
     "header": {
         "title": "Lady Game",
-        "rom_size_kb": 128,
+        "rom_size_kb": 256,
         "sram_kb": 0,
         "region": 1,
         "developer": 0,
@@ -12,6 +12,11 @@
         "delay": 3,
         "feedback": 40,
         "volume": 50,
-        "channels": [8]
+        "channels": [
+            8
+        ]
+    },
+    "layout": {
+        "asset_start": 53248
     }
 }

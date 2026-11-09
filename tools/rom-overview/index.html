@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ROM overview</title>
+  <link rel="stylesheet" href="../contact-editor/editor.css">
+  <link rel="stylesheet" href="editor.css">
+  <script defer src="editor.js"></script>
+</head>
+<body>
+  <main>
+    <p><a href="/">All editors</a> | <a href="/visual-gel/">Visual GEL editor (RAM &amp; declarations)</a></p>
+    <h1>ROM overview</h1>
+    <p id="status" role="status"></p>
+    <section>
+      <h2>ROM size</h2>
+      <p class="hint">The ROM size is a <strong>minimum</strong>. The build always grows the ROM to the next power of two that fits the code, assets, sound and level data, so you can enlarge it but not shrink it below what the game needs.</p>
+      <div class="rom-form">
+        <label>ROM size <select id="rom-size"></select></label>
+        <label>Save RAM <select id="sram-size"></select></label>
+        <label>Asset start <input id="asset-start" type="text" size="8" spellcheck="false"></label>
+        <label>Title <input id="title" type="text" maxlength="21"></label>
+        <label>Region <select id="region"><option value="0">Japan</option><option value="1">USA</option><option value="2">Europe</option></select></label>
+        <label>Developer <input id="developer" type="number" min="0" max="255"></label>
+        <label>Version <input id="version" type="number" min="0" max="255"></label>
+        <button id="save" type="button">Save settings</button>
+      </div>
+      <p class="hint">Asset start is where graphics begin in the first bank. Code runs from $8000 up to it, so raising it gives the code more room, and lowering it gives graphics more room. It is a multiple of 256, written like $C000.</p>
+      <p class="hint">Saved changes take effect on the next build.</p>
+    </section>
+    <section>
+      <h2>Last build</h2>
+      <div id="summary"></div>
+      <div id="banks"></div>
+    </section>
+  </main>
+</body>
+</html>

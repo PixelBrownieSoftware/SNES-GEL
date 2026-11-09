@@ -3,9 +3,11 @@
     function createVisualGelEditor({ status, locals = [], localTypes = {} }) {
     const TYPES = ["u8", "u16", "i8", "i16", "f16", "f32"];
     const CONTROL = new Set(["if", "else", "switch", "case", "default", "while", "break", "return", "for_each"]);
+    const identifier = /^[A-Za-z_]\w*$/;
+    let renameLocal = () => {};
     let index = emptyIndex();
     function emptyIndex() {
-        return { tables: new Map(), fields: new Map(), enums: new Map(), enumValues: {}, defines: new Set(), defineValues: {}, functions: new Set(), valueFunctions: new Map(), hardware: new Set(), bit: new Set(), globals: new Map(), items: [] };
+        return { tables: new Map(), fields: new Map(), enums: new Map(), enumValues: {}, defines: new Set(), defineValues: {}, functions: new Set(), functionInfo: new Map(), valueFunctions: new Map(), hardware: new Set(), bit: new Set(), globals: new Map(), items: [] };
     }
 
     function buildIndex(sym) {
@@ -30,6 +32,7 @@
         for (const local of locals) add("Locals", local, localTypes[local] ? `t-${localTypes[local]}` : "");
         for (const [name, info] of Object.entries(sym.functions || {})) {
             idx.functions.add(name); add("Functions", name, "t-fn");
+            idx.functionInfo.set(name, info);
             if (info.returnType) {
                 idx.valueFunctions.set(name, info);
                 add("Returning functions", name, `t-${info.returnType}`);
@@ -111,6 +114,8 @@
                 const row = el("button", "picker-item");
                 row.type = "button";
                 let description = item.cat;
+                const fnInfo = item.cat === "Functions" || item.cat === "Returning functions" ? index.functionInfo.get(item.label) : null;
+                if (fnInfo) description = `(${fnInfo.params.join(", ")})${fnInfo.returnType ? ` -> ${fnInfo.returnType}` : ""}`;
                 if (item.cat === "Defines") {
                     const type = defineType ? defineType() : "";
                     const info = VisualGelModel.defineCompatibility(type, item.label, index.defineValues);
@@ -180,9 +185,9 @@
                 closePicker();
                 const selected = item && categories && !allowManual
                     ? { t: "ref", name: value, category: item.cat } : value;
-                set(selected, item);
+                const rebuild = set(selected, item);
                 show();
-                onChange(false);
+                onChange(rebuild === true);
             }, manual, () => { closePicker(); view.focus(); }, defineType);
         }
         view.addEventListener("click", edit);
@@ -218,12 +223,21 @@
         if (op === "assign") return { op, operator: "*=", target: "", value: newExpr() };
         if (op === "call") return { op, fn: "", args: "" };
         if (op === "free") return { op, target: "" };
+        if (op === "comment") return { op, text: "" };
         if (op === "create") return { op, table: "", var: "" };
         return { op, target: "", value: newExpr() };
     }
 
     // Structured expression: values, operator choosers and real bracket groups.
     // `check` returns a problem message for the whole expression in its current state.
+    function paramLabel(param) {
+        if (!param) return el("span", "param-label", "extra");
+        const [type, ...name] = param.split(" ");
+        const label = el("span", "param-label", `${name.join(" ")}:`);
+        label.title = `${type} ${name.join(" ")}`;
+        return label;
+    }
+
     function renderExpr(items, onChange, check, depth = 0, allowNegation = true, defineType = null) {
         const box = el("span", depth ? "expr group" : "expr");
         const rebuild = () => { selection = null; onChange(true); };
@@ -290,6 +304,7 @@
                 host.append(el("span", `t-${info.returnType}`, call.fn), el("span", "kw", "("));
                 call.args.forEach((arg, n) => {
                     if (n) host.append(el("span", "kw", ","));
+                    host.append(paramLabel(info.params[n]));
                     host.append(slot(() => call.args[n], value => {
                         call.args[n] = value;
                         item.text = `${call.prefix}${call.fn}(${call.args.join(", ")})`;
@@ -399,7 +414,7 @@
         const empty = el("p", "picker-empty", "No matching statements.");
         empty.hidden = true;
         const buttons = [];
-        for (const [op, label] of [["set", "+ set"], ["add", "+ add"], ["sub", "+ subtract"], ["increment", "+ increment"], ["decrement", "+ decrement"], ["assign", "+ assignment"], ["declare", "+ variable"], ["expr", "+ expression"], ["call", "+ call"], ["create", "+ create"], ["free", "+ free"], ["if", "+ if"], ["while", "+ while"], ["for_each", "+ for each"], ["switch", "+ switch"], ["return", "+ return"]]) {
+        for (const [op, label] of [["set", "+ set"], ["add", "+ add"], ["sub", "+ subtract"], ["increment", "+ increment"], ["decrement", "+ decrement"], ["assign", "+ assignment"], ["declare", "+ variable"], ["expr", "+ expression"], ["call", "+ call"], ["create", "+ create"], ["free", "+ free"], ["if", "+ if"], ["while", "+ while"], ["for_each", "+ for each"], ["switch", "+ switch"], ["return", "+ return"], ["comment", "+ comment"]]) {
             const b = el("button", "ghost", label); b.type = "button";
             b.addEventListener("click", () => { list.push(newStatement(op)); onChange(true); });
             choices.append(b);
@@ -434,51 +449,355 @@
             stmt.op === "switch" ? [...stmt.cases.map(item => item.body), ...(stmt.default === null ? [] : [stmt.default])] : [];
         return lists.some(inner => inner === list || inner.some(child => contains(child, list)));
     }
-    function dropZone(list, at, onChange) {
+    // Multi-statement selection. Added statements are ticked within one list; statements already in the
+    // file are ticked anywhere in the function and moved at source level by the server.
+    let stmtSel = null;
+    const zones = [];
+    const sourceZones = [];
+    const unitSel = new Set();
+    let mover = null;
+    let selectionBar = null;
+
+    function selectedCount() { return (stmtSel ? stmtSel.set.size : 0) + unitSel.size; }
+    function updateBar() {
+        const count = selectedCount();
+        if (!count) { if (selectionBar) selectionBar.hidden = true; return; }
+        if (!selectionBar) {
+            selectionBar = el("div", "selection-bar");
+            selectionBar.setAttribute("role", "status");
+            selectionBar.append(el("span", "selection-count"));
+            const clear = el("button", "tab", "Deselect"); clear.type = "button";
+            clear.title = "Deselect every selected statement";
+            clear.addEventListener("click", clearSelection);
+            selectionBar.append(clear);
+            const copy = el("button", "tab copy-code", "Copy"); copy.type = "button";
+            copy.title = "Copy the selected statements to the clipboard list";
+            copy.addEventListener("click", () => {
+                if (unitSel.size && mover && mover.copy) mover.copy([...unitSel], false);
+                else status.textContent = "Copy works on statements already saved in the file. Save the new blocks first, then tick them.";
+            });
+            selectionBar.append(copy);
+            const cut = el("button", "tab danger cut-code", "Cut"); cut.type = "button";
+            cut.title = "Copy the selected statements to the clipboard list and remove them";
+            cut.addEventListener("click", () => {
+                if (unitSel.size && mover && mover.copy) mover.copy([...unitSel], true);
+                else status.textContent = "Cut works on statements already saved in the file. Save the new blocks first, then tick them.";
+            });
+            selectionBar.append(cut);
+            const del = el("button", "tab danger", "Delete"); del.type = "button";
+            del.title = "Remove the selected statements from the file";
+            del.addEventListener("click", () => { if (unitSel.size && mover && mover.remove) mover.remove([...unitSel]); });
+            selectionBar.append(del);
+            document.body.append(selectionBar);
+        }
+        selectionBar.hidden = false;
+        selectionBar.querySelector(".danger:not(.cut-code)").hidden = !unitSel.size;
+        selectionBar.firstChild.textContent = `${count} statement${count === 1 ? "" : "s"} selected`;
+    }
+    function clearSelection() {
+        stmtSel = null;
+        unitSel.clear();
+        markSelection();
+        updateBar();
+        status.textContent = "";
+    }
+
+    function childLists(stmt) {
+        if (stmt.op === "if") return [stmt.then, stmt.else];
+        if (stmt.op === "while" || stmt.op === "for_each") return [stmt.body];
+        if (stmt.op === "switch") return [...stmt.cases.map(item => item.body), ...(stmt.default === null ? [] : [stmt.default])];
+        return [];
+    }
+
+    function namesIn(value, out) {
+        if (value === undefined || value === null) return;
+        if (Array.isArray(value)) {
+            for (const item of value) {
+                if (item.t === "group") namesIn(item.items, out);
+                else if (item.t === "ref") namesIn(item.name, out);
+                else if (item.t === "val") namesIn(item.text, out);
+            }
+            return;
+        }
+        const text = typeof value === "string" ? value : VisualGelModel.referenceText(value);
+        for (const match of String(text).replace(/"[^"\r\n]*"|'[^'\r\n]*'/g, " ").matchAll(/(?<![.\w])[A-Za-z_]\w*/g)) out.add(match[0]);
+    }
+
+    function usedNames(stmt) {
+        const out = new Set();
+        for (const key of ["target", "value", "cond", "args"]) namesIn(stmt[key], out);
+        if (stmt.op === "switch") for (const item of stmt.cases) namesIn(item.value, out);
+        return out;
+    }
+
+    function declaredNames(list, out = new Set()) {
+        for (const stmt of list) {
+            if (stmt.op === "declare" && stmt.name) out.add(VisualGelModel.referenceText(stmt.name));
+            if (stmt.op === "create" && stmt.var) out.add(VisualGelModel.referenceText(stmt.var));
+            if (stmt.op === "for_each" && stmt.iterator) out.add(VisualGelModel.referenceText(stmt.iterator));
+            for (const inner of childLists(stmt)) declaredNames(inner, out);
+        }
+        return out;
+    }
+
+    const stmtIds = new WeakMap();
+    function stmtId(stmt) {
+        if (!stmtIds.has(stmt)) stmtIds.set(stmt, stmtIds.size + 1);
+        return stmtIds.get(stmt);
+    }
+
+    // Walks a script top to bottom tracking which variables are in scope, and records every
+    // use of a script-declared variable that is not in scope, plus duplicate declarations.
+    function scopeProblems(list, scope, all, out) {
+        scope = new Set(scope);
+        for (const stmt of list) {
+            for (const name of usedNames(stmt)) {
+                if (all.has(name) && !scope.has(name)) out.set(`${stmtId(stmt)}:use:${name}`, { name, kind: "use" });
+            }
+            const inner = new Set(scope);
+            if (stmt.op === "for_each" && stmt.iterator) inner.add(VisualGelModel.referenceText(stmt.iterator));
+            for (const body of childLists(stmt)) scopeProblems(body, inner, all, out);
+            const made = stmt.op === "declare" ? stmt.name : stmt.op === "create" ? stmt.var : "";
+            if (made) {
+                const name = VisualGelModel.referenceText(made);
+                if (name && scope.has(name)) out.set(`${stmtId(stmt)}:dup:${name}`, { name, kind: "dup" });
+                if (name) scope.add(name);
+            }
+        }
+    }
+
+    function rootProblems(root, all) {
+        const out = new Map();
+        scopeProblems(root, new Set(), all, out);
+        return out;
+    }
+
+    function selectedStatements(list, stmt) {
+        if (stmtSel && stmtSel.list === list && stmtSel.set.has(stmt)) return list.filter(item => stmtSel.set.has(item));
+        return [stmt];
+    }
+
+    function verdict(target) {
+        const { moved, list: from, root: fromRoot } = drag;
+        const { list, at, root } = target;
+        if (moved.some(stmt => contains(stmt, list))) return { ok: false, reason: "A block cannot be moved inside itself." };
+        const roots = [...new Set([fromRoot, root])];
+        const all = new Set();
+        for (const item of roots) declaredNames(item, all);
+        const before = new Map();
+        for (const item of roots) for (const [key, value] of rootProblems(item, all)) before.set(key, value);
+
+        const fromCopy = from.slice(), listCopy = list.slice();
+        const removedBefore = from === list ? moved.filter(stmt => fromCopy.indexOf(stmt) < at).length : 0;
+        for (const stmt of moved) from.splice(from.indexOf(stmt), 1);
+        list.splice(at - removedBefore, 0, ...moved);
+        let problem = null;
+        for (const item of roots) {
+            for (const [key, value] of rootProblems(item, all)) if (!before.has(key) && !problem) problem = value;
+        }
+        from.splice(0, from.length, ...fromCopy);
+        if (from !== list) list.splice(0, list.length, ...listCopy);
+        if (!problem) return { ok: true, reason: "" };
+        return { ok: false, reason: problem.kind === "dup"
+            ? `"${problem.name}" would be declared twice in the same scope there.`
+            : `"${problem.name}" would be used before it is declared or outside its scope there.` };
+    }
+
+    function dropZone(list, at, onChange, root) {
         const zone = el("div", "dropzone");
+        const target = { list, at, root, zone };
+        zones.push(target);
         zone.addEventListener("dragover", event => {
-            if (!drag || list === drag.stmt.then || list === drag.stmt.else || contains(drag.stmt, list)) return;
+            if (!drag || drag.source || !target.verdict || !target.verdict.ok) {
+                if (drag && !drag.source && target.verdict) status.textContent = target.verdict.reason;
+                return;
+            }
             event.preventDefault();
             zone.classList.add("over");
         });
         zone.addEventListener("dragleave", () => zone.classList.remove("over"));
         zone.addEventListener("drop", event => {
             event.preventDefault();
-            if (!drag || contains(drag.stmt, list)) return;
-            const { list: from, stmt } = drag;
-            const old = from.indexOf(stmt);
-            if (old < 0) return;
-            from.splice(old, 1);
-            list.splice(from === list && old < at ? at - 1 : at, 0, stmt);
+            if (!drag || drag.source) return;
+            const result = verdict(target);
+            if (!result.ok) { status.textContent = result.reason; return; }
+            const { moved, list: from } = drag;
+            const removedBefore = from === list ? moved.filter(stmt => from.indexOf(stmt) < at).length : 0;
+            for (const stmt of moved) from.splice(from.indexOf(stmt), 1);
+            list.splice(at - removedBefore, 0, ...moved);
             drag = null;
+            stmtSel = null;
+            updateBar();
+            status.textContent = moved.length > 1 ? `Moved ${moved.length} statements.` : "Moved statement.";
             onChange(true);
         });
         return zone;
     }
 
-    function renderBlocks(list, container, onChange, fixed = false) {
+    function sourceZone(block, before) {
+        const zone = el("div", "dropzone");
+        const target = { zone, block, before, source: true };
+        sourceZones.push(target);
+        zone.addEventListener("dragover", event => {
+            if (!drag || !drag.source) return;
+            if (!target.verdict || !target.verdict.ok) {
+                if (target.verdict) status.textContent = target.verdict.reason;
+                return;
+            }
+            event.preventDefault();
+            zone.classList.add("over");
+        });
+        zone.addEventListener("dragleave", () => zone.classList.remove("over"));
+        zone.addEventListener("drop", event => {
+            event.preventDefault();
+            if (!drag || !drag.source || !target.verdict || !target.verdict.ok) return;
+            const ids = drag.ids;
+            drag = null;
+            document.body.classList.remove("dragging");
+            Promise.resolve(mover.apply(ids, { block, before })).catch(error => { status.textContent = `Could not move: ${error.message}`; });
+        });
+        return zone;
+    }
+
+    function clearZoneMarks() {
+        for (const list of [zones, sourceZones]) {
+            for (let n = list.length - 1; n >= 0; n--) {
+                const target = list[n];
+                target.zone.classList.remove("ok", "bad", "over");
+                target.verdict = null;
+                if (!target.zone.isConnected) list.splice(n, 1);
+            }
+        }
+    }
+
+    function markSelection() {
+        document.querySelectorAll(".block.sel").forEach(node => node.classList.remove("sel"));
+        document.querySelectorAll(".stmt-pick").forEach(node => { node.checked = false; });
+    }
+
+    // Checkbox and drag handle for a statement or control block that already exists in the file.
+    function sourceHandle(unit, block) {
+        const wrap = el("span", "unit-handle");
+        const pick = el("input", "stmt-pick");
+        pick.type = "checkbox";
+        pick.title = "Select statements to move together";
+        pick.setAttribute("aria-label", "Select statement");
+        pick.checked = unitSel.has(unit);
+        block.classList.toggle("sel", pick.checked);
+        pick.addEventListener("click", () => {
+            const on = pick.checked;
+            if (stmtSel) { stmtSel = null; unitSel.clear(); markSelection(); }
+            pick.checked = on;
+            if (on) unitSel.add(unit); else unitSel.delete(unit);
+            block.classList.toggle("sel", on);
+            updateBar();
+            status.textContent = unitSel.size ? "Drag any selected ⠿ handle to move the selection, including everything inside blocks." : "";
+        });
+        const grip = el("span", "grip", "⠿");
+        grip.draggable = true;
+        grip.title = "Drag to move (moves every ticked statement; blocks move with their contents)";
+        grip.addEventListener("dragstart", event => {
+            event.stopPropagation();
+            if (!mover) { event.preventDefault(); return; }
+            const ids = unitSel.has(unit) ? [...unitSel] : [unit];
+            const token = { source: true, ids };
+            drag = token;
+            event.dataTransfer.effectAllowed = "move";
+            event.dataTransfer.setData("text/plain", "statements");
+            event.dataTransfer.setDragImage(block, 10, 10);
+            document.body.classList.add("dragging");
+            clearZoneMarks();
+            status.textContent = "Checking where this can go…";
+            Promise.resolve(mover.preview(ids)).then(result => {
+                if (drag !== token) return;
+                const known = new Map(result.targets.map(item => [`${item.block}:${item.before}`, item]));
+                for (const target of sourceZones) {
+                    const verdict = known.get(`${target.block}:${target.before}`) || { ok: false, reason: "That is not a valid place for this selection." };
+                    target.verdict = verdict;
+                    target.zone.classList.add(verdict.ok ? "ok" : "bad");
+                    target.zone.title = verdict.ok ? "Drop here" : verdict.reason;
+                }
+                status.textContent = `Moving ${result.units.length} statement${result.units.length === 1 ? "" : "s"}: green spots are valid, red spots would break variable scope.`;
+            }).catch(error => { status.textContent = error.message; });
+            setTimeout(() => ids.forEach(id => {
+                const node = document.querySelector(`[data-unit="${id}"]`);
+                if (node) node.classList.add("lifted");
+            }), 0);
+        });
+        grip.addEventListener("dragend", () => {
+            drag = null;
+            document.body.classList.remove("dragging");
+            document.querySelectorAll(".lifted").forEach(node => node.classList.remove("lifted"));
+            clearZoneMarks();
+        });
+        block.dataset.unit = String(unit);
+        wrap.append(pick, grip);
+        return wrap;
+    }
+
+    function renderBlocks(list, container, onChange, fixed = false, root = list, unit = null) {
         container.replaceChildren();
         list.forEach((stmt, i) => {
-            if (!fixed) container.append(dropZone(list, i, onChange));
+            if (!fixed && unit === null) container.append(dropZone(list, i, onChange, root));
             const block = el("div", `block block-${stmt.op}`);
             const head = el("div", "block-head");
             const grip = el("span", "grip", "⠿");
             grip.draggable = true;
-            grip.title = "Drag to move";
+            grip.title = "Drag to move (moves every ticked statement in this list)";
             grip.addEventListener("dragstart", event => {
-                drag = { list, stmt };
+                event.stopPropagation();
+                const moved = selectedStatements(list, stmt);
+                drag = { list, stmt, moved, root };
                 event.dataTransfer.effectAllowed = "move";
                 event.dataTransfer.setData("text/plain", stmt.op);
                 event.dataTransfer.setDragImage(block, 10, 10);
                 document.body.classList.add("dragging");
-                setTimeout(() => block.classList.add("lifted"), 0);
+                clearZoneMarks();
+                for (const target of zones) {
+                    target.verdict = verdict(target);
+                    target.zone.classList.add(target.verdict.ok ? "ok" : "bad");
+                    target.zone.title = target.verdict.ok ? "Drop here" : target.verdict.reason;
+                }
+                status.textContent = `Moving ${moved.length} statement${moved.length === 1 ? "" : "s"}: green spots are valid, red spots would break variable scope.`;
+                setTimeout(() => moved.forEach(item => {
+                    const node = document.querySelector(`[data-stmt="${stmtId(item)}"]`);
+                    if (node) node.classList.add("lifted");
+                }), 0);
             });
             grip.addEventListener("dragend", () => {
                 drag = null;
                 document.body.classList.remove("dragging");
-                block.classList.remove("lifted");
+                document.querySelectorAll(".block.lifted").forEach(node => node.classList.remove("lifted"));
+                clearZoneMarks();
             });
-            if (!fixed) head.append(grip);
+            block.dataset.stmt = String(stmtId(stmt));
+            if (!fixed && unit !== null) {
+                head.append(sourceHandle(unit, block));
+            } else if (!fixed) {
+                const pick = el("input", "stmt-pick");
+                pick.type = "checkbox";
+                pick.title = "Select statements to move together";
+                pick.setAttribute("aria-label", "Select statement");
+                const selected = !!stmtSel && stmtSel.list === list && stmtSel.set.has(stmt);
+                pick.checked = selected;
+                block.classList.toggle("sel", selected);
+                pick.addEventListener("click", () => {
+                    const on = pick.checked;
+                    if (!stmtSel || stmtSel.list !== list) { unitSel.clear(); markSelection(); stmtSel = { list, set: new Set() }; }
+                    stmtSel.set[on ? "add" : "delete"](stmt);
+                    container.querySelectorAll(":scope > .block").forEach((node, n) => {
+                        const ticked = stmtSel.set.has(list[n]);
+                        node.classList.toggle("sel", ticked);
+                        const box = node.querySelector(":scope > .block-head > .stmt-pick");
+                        if (box) box.checked = ticked;
+                    });
+                    if (!stmtSel.set.size) stmtSel = null;
+                    updateBar();
+                    status.textContent = stmtSel ? "Drag any selected ⠿ handle to move the selection together." : "";
+                });
+                head.append(pick);
+                head.append(grip);
+            }
             const tools = el("span", "block-tools");
             const tool = (label, title, fn) => {
                 const b = el("button", "icon", label); b.type = "button"; b.title = title;
@@ -522,8 +841,24 @@
                 head.append(slot(() => stmt.fn, v => { stmt.fn = v; }, ["Functions", "Hardware", "Bit"], "[function]", () => onChange(true)));
                 const fn = VisualGelModel.referenceText(stmt.fn);
                 const intrinsic = VisualGelModel.parseIntrinsic(`${fn}(${stmt.args || (["bit_set", "bit_clear", "bit_test", "peek8l"].includes(fn) ? ", " : "")})`);
+                const projectFn = index.functionInfo.get(fn);
                 if (intrinsic) {
                     head.append(renderIntrinsic(fn, intrinsic.args, args => { stmt.args = args.join(", "); }, onChange, "", false));
+                } else if (projectFn) {
+                    const given = VisualGelModel.splitArguments(stmt.args || "") || [stmt.args];
+                    const args = projectFn.params.map((_, n) => given[n] || "");
+                    for (let n = projectFn.params.length; n < given.length; n++) args.push(given[n]);
+                    const store = () => { stmt.args = args.every(arg => !arg.trim()) ? "" : args.join(", "); };
+                    head.append(el("span", "kw", "("));
+                    args.forEach((arg, n) => {
+                        if (n) head.append(el("span", "kw", ","));
+                        head.append(paramLabel(projectFn.params[n]));
+                        head.append(slot(() => args[n], v => { args[n] = v; store(); },
+                            ["Fields", "Globals", "Locals", "Defines", "Enums"], `[${projectFn.params[n] || `extra argument ${n + 1}`}]`,
+                            () => onChange(true), null, true));
+                    });
+                    head.append(el("span", "kw", ")"));
+                    if (!projectFn.params.length) head.append(el("span", "param-label", "no parameters"));
                 } else {
                     head.append(el("span", "kw", "("));
                     head.append(slot(() => stmt.args, v => { stmt.args = v; }, null, "[arguments]", () => onChange(true)));
@@ -536,7 +871,15 @@
                     for (const type of TYPES) { const option = el("option", `t-${type}`, type); option.value = type; option.selected = stmt.type === type; select.append(option); }
                     select.classList.add(`t-${stmt.type}`);
                     select.addEventListener("change", () => { select.classList.remove(`t-${stmt.type}`); stmt.type = select.value; select.classList.add(`t-${stmt.type}`); onChange(false); });
-                    head.append(select, slot(() => stmt.name, v => { stmt.name = v; }, ["None"], "[name]", () => onChange(false)));
+                    head.append(select, slot(() => stmt.name, v => {
+                        const previous = stmt.name;
+                        stmt.name = v;
+                        if (previous && previous !== v && identifier.test(v)) {
+                            renameLocal(previous, v);
+                            return true;
+                        }
+                        return false;
+                    }, ["None"], "[name]", () => onChange(false)));
                 }
                 if (stmt.value && VisualGelModel.parseExpr(stmt.value).some(item =>
                     item.t === "val" && (VisualGelModel.parseIntrinsic(item.text) ||
@@ -559,6 +902,16 @@
             } else if (stmt.op === "expr" || stmt.op === "header") {
                 head.append(el("span", "t-ctl", stmt.op === "header" ? stmt.label : "expression"));
                 head.append(renderExpr(stmt.value, onChange, () => "", 0, stmt.op !== "header" || stmt.label !== "case value"));
+            } else if (stmt.op === "comment") {
+                block.classList.add("block-comment");
+                const field = el("textarea", "comment-input");
+                field.rows = Math.max(1, (stmt.text || "").split("\n").length);
+                field.value = stmt.text || "";
+                field.placeholder = "Comment";
+                field.setAttribute("aria-label", "Comment");
+                field.addEventListener("input", () => { stmt.text = field.value; field.rows = Math.max(1, field.value.split("\n").length); });
+                field.addEventListener("change", () => onChange(false));
+                head.append(el("span", "comment-mark", "//"), field);
             } else if (["if", "while", "switch"].includes(stmt.op)) {
                 head.append(el("span", "t-ctl", stmt.op));
                 head.append(renderExpr(stmt.cond, onChange, () => ""));
@@ -567,11 +920,11 @@
             block.append(head);
             if (stmt.op === "if") {
                 const body = el("div", "block-body");
-                renderBlocks(stmt.then, body, onChange);
+                renderBlocks(stmt.then, body, onChange, false, root);
                 block.append(body, addBar(stmt.then, onChange));
                 if (stmt.else.length) {
                     const other = el("div", "block-body");
-                    renderBlocks(stmt.else, other, onChange);
+                    renderBlocks(stmt.else, other, onChange, false, root);
                     block.append(el("div", "t-ctl else-label", "else"), other, addBar(stmt.else, onChange));
                 } else {
                     const add = el("button", "ghost", "+ else"); add.type = "button";
@@ -580,7 +933,7 @@
                 }
             } else if (stmt.op === "while" || stmt.op === "for_each") {
                 const nested = el("div", "block-body");
-                renderBlocks(stmt.body, nested, onChange);
+                renderBlocks(stmt.body, nested, onChange, false, root);
                 block.append(nested, addBar(stmt.body, onChange));
             } else if (stmt.op === "switch") {
                 stmt.cases.forEach((item, n) => {
@@ -589,7 +942,7 @@
                     const remove = el("button", "icon", "✕"); remove.type = "button"; remove.title = "Remove case";
                     remove.addEventListener("click", () => { stmt.cases.splice(n, 1); onChange(true); });
                     row.append(remove);
-                    const nested = el("div", "block-body"); renderBlocks(item.body, nested, onChange);
+                    const nested = el("div", "block-body"); renderBlocks(item.body, nested, onChange, false, root);
                     block.append(row, nested, addBar(item.body, onChange));
                 });
                 const addCase = el("button", "ghost", "+ case"); addCase.type = "button";
@@ -600,7 +953,7 @@
                     const remove = el("button", "icon", "✕"); remove.type = "button"; remove.title = "Remove default";
                     remove.addEventListener("click", () => { stmt.default = null; onChange(true); });
                     row.append(remove);
-                    const nested = el("div", "block-body"); renderBlocks(stmt.default, nested, onChange);
+                    const nested = el("div", "block-body"); renderBlocks(stmt.default, nested, onChange, false, root);
                     block.append(row, nested, addBar(stmt.default, onChange));
                 } else {
                     const addDefault = el("button", "ghost", "+ default"); addDefault.type = "button";
@@ -610,7 +963,7 @@
             }
             container.append(block);
         });
-        if (!fixed) container.append(dropZone(list, list.length, onChange));
+        if (!fixed && unit === null) container.append(dropZone(list, list.length, onChange, root));
     }
 
     function targetType(target) {
@@ -758,7 +1111,7 @@
         if (openPicker && !openPicker.parentElement.contains(event.target)) closePicker();
     }, true);
 
-    return { buildIndex, emptyIndex, setIndex(value) { index = value; }, setLocals(value, types = {}) { locals = value; localTypes = types; }, highlight, el, renderBlocks, addBar, firstTypeProblem, resetSelection() { selection = null; closePicker(); } };
+    return { buildIndex, emptyIndex, setIndex(value) { index = value; }, setLocals(value, types = {}) { locals = value; localTypes = types; }, setLocalRenameHandler(value) { renameLocal = value; }, highlight, el, renderBlocks, addBar, firstTypeProblem, setSourceMover(value) { mover = value; }, selectedUnits() { return [...unitSel]; }, sourceZone, sourceHandle, resetSelection() { selection = null; stmtSel = null; unitSel.clear(); updateBar(); closePicker(); } };
     }
     root.createVisualGelEditor = createVisualGelEditor;
 })(globalThis);

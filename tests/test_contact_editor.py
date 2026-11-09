@@ -15,6 +15,20 @@ server = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(server)
 
 
+def test_game_connects_contact_handlers_without_overlapping_mode_flags():
+    game = (ROOT / "game" / "game.gel").read_text(encoding="utf-8")
+    entities = (ROOT / "game" / "entities.gel").read_text(encoding="utf-8")
+    assert '#include "contact.gel"' in game
+    assert "update_entity_contacts();" in entities
+    for handler in ("entity_on_contact", "entity_on_stay", "entity_on_exit"):
+        assert f"{handler}(e1, e2);" in entities
+        assert f"{handler}(e2, e1);" in entities
+    assert "bit_set(Entities[slot].flags, ENTITY_FLAG_CONTACTABLE)" not in entities
+    assert "bit_test(Entities[e1].capabilities, ENTITY_FLAG_CONTACTABLE)" in entities
+    assert "bit_test(Entities[e2].capabilities, ENTITY_FLAG_CONTACTABLE)" in entities
+    assert "!entity_is_active(e1) || !entity_is_active(e2)" in entities
+
+
 def test_generated_contact_handlers_compile():
     if not shutil.which("node"):
         pytest.skip("Node.js is required to exercise the browser editor model")

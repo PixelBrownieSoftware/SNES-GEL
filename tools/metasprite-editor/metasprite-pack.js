@@ -48,12 +48,6 @@
     return out;
   }
 
-  // Per-frame layer anchor: a pixel offset applied to every tile of that layer in the frame.
-  function layerOffset(frame, li) {
-    const a = frame.layerAnchors && frame.layerAnchors[li];
-    return { x: Math.round(Number(a && a.x) || 0), y: Math.round(Number(a && a.y) || 0) };
-  }
-
   // Compose the cells of one frame (layers in the frame's draw order) into the entries the ROM stores.
   function composeFrame(frame, layers, tileCache) {
     const stacks = new Map();
@@ -62,9 +56,7 @@
       const parts = frame.layers[li];
       const layer = layers[li];
       if (!layer) continue;
-      const off = layerOffset(frame, li);
-      for (const q of parts) {
-        const p = { ...q, x: q.x + off.x, y: q.y + off.y };
+      for (const p of parts) {
         const cacheKey = `${li}:${p.sheetX}:${p.sheetY}`;
         let base = tileCache.get(cacheKey);
         if (base === undefined) {
@@ -148,5 +140,5 @@
     return result;
   }
 
-  return { analyze, composeFrame, readTile, canonicalKey, flipH, flipV, layerOrder, layerOffset };
+  return { analyze, composeFrame, readTile, canonicalKey, flipH, flipV, layerOrder };
 });

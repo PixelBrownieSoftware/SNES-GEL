@@ -1,0 +1,71 @@
+{
+ "format": "gel-metasprite-v2",
+ "name": "gem",
+ "tileSize": 8,
+ "stage": {
+  "columns": 1,
+  "rows": 2
+ },
+ "collision": {
+  "width": 2,
+  "height": 2
+ },
+ "anchor": {
+  "x": 0,
+  "y": 0
+ },
+ "hitboxAnchor": {
+  "x": 0,
+  "y": -8
+ },
+ "layers": [
+  {
+   "name": "gem2",
+   "source": "gem2.png",
+   "palette": 0,
+   "visible": true,
+   "cell": {
+    "w": 1,
+    "h": 2
+   }
+  }
+ ],
+ "frames": [
+  {
+   "name": "frame0",
+   "anchor": {
+    "x": 0,
+    "y": 0
+   },
+   "layers": [
+    [
+     {
+      "sheetX": 0,
+      "sheetY": 0,
+      "x": 0,
+      "y": -8
+     },
+     {
+      "sheetX": 0,
+      "sheetY": 1,
+      "x": 0,
+      "y": 0
+     }
+    ]
+   ]
+  }
+ ],
+ "clips": [
+  {
+   "name": "idle",
+   "loop": true,
+   "pingpong": false,
+   "steps": [
+    {
+     "frame": 0,
+     "ticks": 8
+    }
+   ]
+  }
+ ]
+}

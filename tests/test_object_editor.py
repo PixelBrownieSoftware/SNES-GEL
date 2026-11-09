@@ -32,7 +32,8 @@ def test_generated_capabilities_follow_tiled_ids_and_compile():
     data = object_data()
     generated = object_definitions.generate(data, "#define OBJ_PLAYERSTART 7\n")
     assert "if (type == 7) { return 25; }" in generated
-    assert "Future" not in generated
+    assert "#define OBJ_FUTURE 8" in generated
+    assert "if (type == 8) { return 2; }" in generated
     assert "if (type == 3) { return 25; }" in object_definitions.generate(
         data, "#define OBJ_PLAYERSTART 3\n#define OBJ_FUTURE 4\n")
     assert "if (type == 4) { return 2; }" in object_definitions.generate(
@@ -41,6 +42,19 @@ def test_generated_capabilities_follow_tiled_ids_and_compile():
         struct_table Entities[4] { u8 capabilities; }
         fn init_game() { Entities[0].capabilities = object_capabilities(7); }
     """, {}, hot_reload=False)
+
+
+def test_unplaced_object_variant_uses_generated_class_id():
+    data = variant_data()
+    header = "#define OBJ_OTHER 5\n"
+    gel = object_definitions.generate(data, header, {"w": "u8", "vx": "f16"})
+    asm = object_definitions.generate_asm(data, header)
+    assert "#define OBJ_PLAYERSTART 6" in gel
+    assert "#define OBJ_FUTURE 7" in gel
+    assert "if (type == 6 && variant == 2)" in gel
+    assert "db 6, 2, 1, 3, 0" in asm
+    with pytest.raises(ValueError, match="255 available"):
+        object_definitions.generate(data, "#define OBJ_OTHER 255\n")
 
 
 def variant_data():
@@ -167,9 +181,9 @@ def test_shared_server_routes_and_object_roundtrip(tmp_path):
         assert b"createVisualGelEditor" in get("/visual-gel/editor.js")
         for path in ("/visual-gel/", "/contact-editor/"):
             page = get(path)
-            assert b"editor.js?v=define-values-1" in page
+            assert b"editor.js?v=" in page
             assert b"editor.css?v=" in page
-            assert b"model.js?v=define-values-1" in page
+            assert b"model.js?v=" in page
         assert b'el("details", "add-bar")' in get("/visual-gel/editor.js?v=logical-not-1")
         assert b".add-toggle" in get("/visual-gel/editor.css?v=logical-not-1")
         (tmp_path / "game.gel").write_text("fn test() { u8 n = 0; n += 1; }\n", encoding="utf-8")

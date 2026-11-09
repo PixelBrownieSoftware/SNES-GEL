@@ -24,3 +24,6 @@ details summary { cursor: pointer; color: #91caff; }
 .t-f16 { color: #00FFD0; }
 .variant input[class*="t-"], select option[class*="t-"] { background: #171a24; }
 .variant input[class*="t-"] { border-color: currentColor; }
+
+.ms-preview { display: flex; align-items: center; gap: .8rem; margin: .4rem 0; min-height: 3rem; }
+.ms-preview canvas { image-rendering: pixelated; min-width: 24px; height: auto; max-height: 220px; background: repeating-conic-gradient(#222 0 25%, #2c2c2c 0 50%) 0 0 / 12px 12px; border: 1px solid #44495a; }

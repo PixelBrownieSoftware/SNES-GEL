@@ -139,6 +139,28 @@ test("visual expression references survive validation and generation", () => {
         value: [{ t: "ref", name: "x; evil", category: "Fields" }] }]), /reference/);
 });
 
+test("renaming a local updates expression and target references throughout nested statements", () => {
+    const statements = [
+        { op: "declare", type: "u8", name: "want2", value: "want2 + 1" },
+        { op: "if", cond: visual.parseExpr('want2 > 0 && Entities[want2].want2 == "want2"'),
+            then: [{ op: "set", target: { t: "ref", name: "want2", category: "Locals" },
+                value: visual.parseExpr("want2 + other_want2") }],
+            else: [{ op: "call", fn: "use", args: "want2, Entities[want2].want2" }] },
+        { op: "while", cond: visual.parseExpr("want2 < 10"),
+            body: [{ op: "increment", target: "want2", prefix: false }] }
+    ];
+
+    visual.renameVariableReferences(statements, "want2", "wanted");
+
+    assert.equal(statements[0].value, "wanted + 1");
+    assert.equal(visual.exprText(statements[1].cond), 'wanted > 0 && Entities[wanted].want2 == "want2"');
+    assert.equal(statements[1].then[0].target.name, "wanted");
+    assert.equal(visual.exprText(statements[1].then[0].value), "wanted + other_want2");
+    assert.equal(statements[1].else[0].args, "wanted, Entities[wanted].want2");
+    assert.equal(visual.exprText(statements[2].cond), "wanted < 10");
+    assert.equal(statements[2].body[0].target, "wanted");
+});
+
 test("shared history restores snapshots and clears redo after a new edit", () => {
     const initial = { handlers: { hit: [] } };
     const history = createHistory(initial);
@@ -315,4 +337,11 @@ test("logical NOT wraps selected expressions, validates, emits, and reloads", ()
     assert.throws(() => visual.validateStatements([{ op: "if", cond: [
         { t: "group", not: "yes", items: [{ t: "val", text: "x" }] }
     ], then: [], else: [] }]), /invalid negation/);
+});
+
+test("comment blocks emit one // line per text line", () => {
+    const clean = visual.validateStatements([{ op: "comment", text: "first\nsecond" }]);
+    const lines = [];
+    visual.emit(clean, 1, lines);
+    assert.deepEqual(lines, ["    // first", "    // second"]);
 });

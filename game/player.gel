@@ -66,21 +66,18 @@ fn set_character(u8 c) {
 
 // ---- Horizontal movement ----
 fn update_dash(u16 e) {
-    if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
-        Entities[e].vx = -DASH_SPEED;
-    } else {
-        Entities[e].vx = DASH_SPEED;
-    }
-    Entities[e].vy = 0.0;
+    
+    
+    i8 v = vert_input(input_presses);
+    Entities[e].vx = DASH_SPEED * Entities[e].dirx;
+    Entities[e].vy = 0.0 + v * (PLAYER_MAX_SPEED / 1.5);
     dash_frames--;
     if (dash_frames == 0) {
         // Exit with some leftover speed that bleeds off, instead of a hard stop.
-        if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
-            Entities[e].vx = -DASH_EXIT_SPEED;
-        } else {
-            Entities[e].vx = DASH_EXIT_SPEED;
-        }
+        Entities[e].vx = DASH_EXIT_SPEED * Entities[e].dirx;
+    
     }
+
 }
 
 fn vert_input(u8 input) -> i8 {
@@ -199,8 +196,6 @@ fn poll_input() {
 //Instead of pad1_held booleans, we would have a general input system for entities.
 //i.e. horiz_input and vert_input to check if those buttons were pressed
 //This function will not know or care about the specific input source; it will just respond to the input state provided by the entity system.
-f16 dummy_vx = 0.0;
-f16 dummy_fric = 0.0;
 fn update_run(u16 e) {
     if (bit_test(mode_flags, MODE_FLAG_POUNDING)) {
         Entities[e].vx = 0.0;
@@ -225,8 +220,6 @@ fn update_run(u16 e) {
             Entities[e].vx = 0.0;
         }
     }
-    dummy_vx = abs(Entities[e].vx);
-    dummy_fric = FRICTION;
 
     
     if (Entities[e].vx == 0.0) {
@@ -275,7 +268,7 @@ fn start_dash(u16 e) {
     } else {
         Entities[e].vx = DASH_SPEED;
     }
-    dash_frames = DASH_DURATION;
+    Entities[e].dash = DASH_DURATION;
     Entities[e].state = STATE_DASHING;
 }
 
@@ -438,25 +431,6 @@ fn update_topdown(u16 e) {
             Entities[e].vy = 0.0;
         }
     }
-    // if (pad1_held & BTN_UP) {
-    //     player_vy -= PLAYER_ACCEL;
-    //     if (player_vy < -PLAYER_MAX_SPEED) {
-    //         player_vy = -PLAYER_MAX_SPEED;
-    //     }
-    // } else if (pad1_held & BTN_DOWN) {
-    //     player_vy += PLAYER_ACCEL;
-    //     if (player_vy > PLAYER_MAX_SPEED) {
-    //         player_vy = PLAYER_MAX_SPEED;
-    //     }
-    // } else {
-    //     if (player_vy > FRICTION) {
-    //         player_vy -= FRICTION;
-    //     } else if (player_vy < -FRICTION) {
-    //         player_vy += FRICTION;
-    //     } else {
-    //         player_vy = 0.0;
-    //     }
-    // }
 }
 
 fn update_player(u16 e) {
@@ -480,5 +454,14 @@ fn update_player(u16 e) {
 
     move_x(e);
     move_y(e);
+    u8 want_anim = PLAYER_MS_ANIM_IDLE;
+    if (!bit_test(Entities[e].flags, MODE_FLAG_ON_GROUND)) {
+        want_anim = PLAYER_MS_ANIM_AIR;
+    } else if (Entities[e].state != STATE_IDLE) {
+        want_anim = PLAYER_MS_ANIM_RUN;
+    }
+    set_anim(e, want_anim, Entities[e].clip != want_anim);
     update_footstep_sound(e);
 }
+
+

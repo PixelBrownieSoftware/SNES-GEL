@@ -104,10 +104,22 @@ def load(path):
     return validate(json.loads(path.read_text(encoding="utf-8")))
 
 
-def variant_records(data, assets_header):
-    validate(data)
+def object_ids(data, assets_header):
     ids = {name: int(number) for name, number in re.findall(
         r"^#define OBJ_([A-Z0-9_]+) ([0-9]+)\s*$", assets_header, re.MULTILINE)}
+    for obj in data["objects"]:
+        name = obj["class"].upper()
+        if name not in ids:
+            next_id = max(ids.values(), default=0) + 1
+            if next_id > 255:
+                raise ValueError("Object classes exceed the 255 available object type IDs.")
+            ids[name] = next_id
+    return ids
+
+
+def variant_records(data, assets_header):
+    validate(data)
+    ids = object_ids(data, assets_header)
     keys = ["metasprite_id", "palette_id"] + sorted(
         {key for obj in data["objects"] for variant in obj.get("variants", [])
          for key in variant.get("values", {})}, key=str.upper)
@@ -130,9 +142,14 @@ def variant_records(data, assets_header):
 
 def generate(data, assets_header, field_types=None):
     keys, entries = variant_records(data, assets_header)
-    ids = {name: int(number) for name, number in re.findall(
+    asset_ids = {name: int(number) for name, number in re.findall(
         r"^#define OBJ_([A-Z0-9_]+) ([0-9]+)\s*$", assets_header, re.MULTILINE)}
-    lines = ["// Generated from objects.json and Tiled object classes.", "fn object_capabilities(u8 type) {"]
+    ids = object_ids(data, assets_header)
+    lines = ["// Generated from objects.json and Tiled object classes."]
+    for name, number in ids.items():
+        if name not in asset_ids:
+            lines.append(f"#define OBJ_{name} {number}")
+    lines.append("fn object_capabilities(u8 type) {")
     for obj in data["objects"]:
         name = obj["class"].upper()
         if name in ids:

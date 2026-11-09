@@ -48,9 +48,10 @@ STDLIB_DIR = os.path.join(COMPILER_DIR, "stdlib")
 # soundbank (which needs whole banks to itself) after that. All LoROM $8000-$FFFF banks.
 SPC_PROGRAM_BANK = 0x81
 SOUNDBANK_BANK = 0x82
-CODE_LIMIT_WITH_ASSETS = 0xC000     # png_to_snes_tiles.py places assets from here
+CODE_LIMIT_WITH_ASSETS = 0xC000     # default start of the assets in bank $80; gel.json "layout.asset_start" overrides it
 CODE_LIMIT = 0xFFC0                 # header / vectors
 CONFIG_FILE = "gel.json"
+ASSET_START_RANGE = (0x9000, 0xF000)
 
 RELEASE = "--release" in sys.argv    # release ROMs skip hot-reload state restore
 NO_OPT = "--no-opt" in sys.argv      # skip the peephole optimiser
@@ -105,6 +106,43 @@ def load_config():
             return json.load(f)
     except ValueError as e:
         fail(f"{CONFIG_FILE}: {e}")
+
+
+def asset_start():
+    """Where assets begin in bank $80, i.e. where the code limit sits. Set by gel.json layout.asset_start."""
+    value = load_config().get("layout", {}).get("asset_start", CODE_LIMIT_WITH_ASSETS)
+    low, high = ASSET_START_RANGE
+    if type(value) is not int or not low <= value <= high or value % 0x100:
+        fail(f"{CONFIG_FILE}: layout.asset_start must be a multiple of 256 between "
+             f"{low} (${low:04X}) and {high} (${high:04X}).")
+    return value
+
+
+def write_rom_layout(rom, rom_kb, header_cfg, code_end, code_limit, start, first_free_bank, soundbank_bytes):
+    """build/rom-layout.json: what the ROM overview editor shows. Per-bank use is measured from the
+    finished ROM (padding is 0xFF), so it also covers level data and anything else placed in a bank."""
+    from gel_codegen import DEFAULT_HEADER
+    banks = []
+    for number in range(len(rom) // 0x8000):
+        data = rom[number * 0x8000:(number + 1) * 0x8000]
+        banks.append({"bank": 0x80 + number, "used": len(data.rstrip(b"\xff"))})
+    assets = {}
+    try:
+        with open(os.path.join(BUILD, "assets.layout.json")) as f:
+            assets = json.load(f)
+    except (OSError, ValueError):
+        pass
+    layout_info = {
+        "rom_kb": rom_kb,
+        "requested_kb": int({**DEFAULT_HEADER, **header_cfg}["rom_size_kb"]),
+        "code_start": 0x8000, "code_end": code_end, "code_limit": code_limit,
+        "asset_start": start, "asset_end": assets.get("end") if start is not None else None,
+        "spc_bank": SPC_PROGRAM_BANK, "soundbank_bank": SOUNDBANK_BANK,
+        "soundbank_bytes": soundbank_bytes, "first_free_bank": first_free_bank,
+        "banks": banks,
+    }
+    with open(os.path.join(BUILD, "rom-layout.json"), "w") as f:
+        json.dump(layout_info, f, indent=1)
 
 
 def finalize_rom(rom, header_cfg):
@@ -335,7 +373,7 @@ def asset_input_files(assets_dir):
 ASSET_SCRIPTS = ("build.py", "build_cache.py", "png_to_snes_tiles.py", "level_pack.py", "metasprite_pack.py")
 
 
-def build_assets(cache, assets_dir, first_free_bank):
+def build_assets(cache, assets_dir, first_free_bank, start=CODE_LIMIT_WITH_ASSETS):
     """Cached wrapper around png_to_snes_tiles.py. It converts into a scratch folder and only
     copies the results into build/ on success, so a failed conversion leaves build/ untouched."""
     try:
@@ -344,7 +382,7 @@ def build_assets(cache, assets_dir, first_free_bank):
     except ImportError:
         pil = "?"
     files = asset_input_files(assets_dir) + [os.path.join(COMPILER_DIR, n) for n in ASSET_SCRIPTS]
-    key = make_key(PROJECT, files, f"bank={first_free_bank:#x};pil={pil};py={sys.version_info[:2]}")
+    key = make_key(PROJECT, files, f"bank={first_free_bank:#x};start={start:#x};pil={pil};py={sys.version_info[:2]}")
     hit = cache.lookup("assets", key)
     if hit:
         print("  assets: unchanged, using cached conversion")
@@ -355,7 +393,7 @@ def build_assets(cache, assets_dir, first_free_bank):
     os.makedirs(scratch)
     try:
         subprocess.run([sys.executable, os.path.join(COMPILER_DIR, "png_to_snes_tiles.py"),
-                        assets_dir, scratch, hex(first_free_bank)], check=True)
+                        assets_dir, scratch, hex(first_free_bank), hex(start)], check=True)
         produced = sorted(n for n in os.listdir(scratch) if os.path.isfile(os.path.join(scratch, n)))
         for stale in set(old_outputs) - set(produced):
             try:
@@ -399,10 +437,11 @@ def build():
     if soundbank:
         size = os.path.getsize(soundbank)
         first_free_bank += (size + 0x7FFF) // 0x8000
+    start = asset_start()
     print("[1/4] Processing 'assets/' directory...")
     t0 = time.time()
     if os.path.isdir(assets_dir):
-        build_assets(cache, assets_dir, first_free_bank)
+        build_assets(cache, assets_dir, first_free_bank, start)
     else:
         print("  (no assets/ folder, skipping)")
     t_assets = time.time() - t0
@@ -471,11 +510,13 @@ def build():
         sys.exit(1)
     rom, labels = assembled
     code_end = labels.get("snesmod_code_end", labels.get("_gel_code_end", 0)) & 0xFFFF
-    code_limit = CODE_LIMIT_WITH_ASSETS if has_assets else CODE_LIMIT
+    code_limit = start if has_assets else CODE_LIMIT
     if code_end > code_limit:
         fail(f"Code ends at $80{code_end:04X}, past the ${code_limit:04X} limit "
              f"({code_end - code_limit} bytes too many).")
     rom, rom_kb = finalize_rom(rom, header_cfg)
+    write_rom_layout(rom, rom_kb, header_cfg, code_end, code_limit, start if has_assets else None,
+                     first_free_bank, os.path.getsize(soundbank) if soundbank else 0)
     with open(os.path.join(BUILD, "game.sfc"), "wb") as f:
         f.write(rom)
     size = len(rom)

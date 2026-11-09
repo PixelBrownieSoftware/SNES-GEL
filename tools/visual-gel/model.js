@@ -136,6 +136,75 @@
         return items.map(item => item.t === "op" ? ` ${item.op} ` : item.t === "group" ? `${item.not ? "!" : ""}(${exprText(item.items)})` : item.t === "ref" ? item.name : item.text).join("");
     }
 
+    function renameIdentifier(text, oldName, newName) {
+        let result = "", quote = "";
+        for (let i = 0; i < text.length;) {
+            const ch = text[i];
+            if (quote) {
+                result += ch;
+                if (ch === "\\") {
+                    if (i + 1 < text.length) result += text[++i];
+                } else if (ch === quote) quote = "";
+                i++;
+                continue;
+            }
+            if (ch === "'" || ch === '"') {
+                quote = ch;
+                result += ch;
+                i++;
+                continue;
+            }
+            if (/[A-Za-z_]/.test(ch)) {
+                let end = i + 1;
+                while (end < text.length && /[A-Za-z0-9_]/.test(text[end])) end++;
+                const word = text.slice(i, end);
+                const previous = text.slice(0, i).trimEnd().slice(-1);
+                const next = text.slice(end).trimStart()[0];
+                result += word === oldName && previous !== "." && next !== "(" ? newName : word;
+                i = end;
+                continue;
+            }
+            result += ch;
+            i++;
+        }
+        return result;
+    }
+
+    function renameVariableReferences(statements, oldName, newName) {
+        function reference(value) {
+            if (typeof value === "string") return renameIdentifier(value, oldName, newName);
+            if (value && value.t === "ref") value.name = renameIdentifier(value.name, oldName, newName);
+            return value;
+        }
+        function expression(value) {
+            if (typeof value === "string") return renameIdentifier(value, oldName, newName);
+            if (!Array.isArray(value)) return value;
+            for (const item of value) {
+                if (item.t === "group") expression(item.items);
+                else if (item.t === "ref") item.name = renameIdentifier(item.name, oldName, newName);
+                else if (item.t === "val") item.text = renameIdentifier(item.text, oldName, newName);
+            }
+            return value;
+        }
+        function visit(list) {
+            for (const stmt of list) {
+                if (["set", "add", "sub", "assign", "increment", "decrement", "free"].includes(stmt.op))
+                    stmt.target = reference(stmt.target);
+                if (["set", "add", "sub", "assign", "return", "declare", "expr", "header"].includes(stmt.op))
+                    stmt.value = expression(stmt.value);
+                if (["if", "while", "switch"].includes(stmt.op)) stmt.cond = expression(stmt.cond);
+                if (stmt.op === "call") stmt.args = renameIdentifier(stmt.args || "", oldName, newName);
+                if (stmt.op === "if") { visit(stmt.then || []); visit(stmt.else || []); }
+                else if (["while", "for_each"].includes(stmt.op)) visit(stmt.body || []);
+                else if (stmt.op === "switch") {
+                    for (const item of stmt.cases || []) visit(item.body || []);
+                    if (stmt.default) visit(stmt.default);
+                }
+            }
+        }
+        visit(statements);
+    }
+
     function cleanExpr(value, label, depth = 0) {
         if (typeof value === "string") value = parseExpr(value);
         if (!Array.isArray(value) || !value.length) throw new Error(`${label} is empty.`);
@@ -239,6 +308,10 @@
                 if (name && (!identifier.test(name) || reserved.has(name))) throw new Error(`${where}: variable name must be a GEL identifier.`);
                 return { op: "create", table, var: name };
             }
+            if (stmt.op === "comment") {
+                const text = typeof stmt.text === "string" ? stmt.text.replace(/\r/g, "") : "";
+                return { op: "comment", text };
+            }
             if (stmt.op === "if") {
                 return {
                     op: "if", cond: cleanExpr(stmt.cond, `${where} condition`),
@@ -302,6 +375,9 @@
             }
             else if (s.op === "free") lines.push(`${pad}${referenceText(s.target)}.free();`);
             else if (s.op === "create") lines.push(`${pad}${s.var ? `u8 ${s.var} = ` : ""}${referenceText(s.table)}.create();`);
+            else if (s.op === "comment") {
+                for (const line of (s.text || "").split("\n")) lines.push(`${pad}//${line.trim() ? ` ${line.trim()}` : ""}`);
+            }
             else if (s.op === "call") lines.push(`${pad}${referenceText(s.fn)}(${s.args});`);
             else lines.push(`${pad}${referenceText(s.target)} ${assignOps[s.op]} ${exprText(s.value)};`);
         }
@@ -360,7 +436,7 @@
         return items;
     }
 
-    const api = { validateStatements, validateHandlers, emit, referenceText, checkValue, defineCompatibility, parseExpr, exprText, wrapRange, OPERATORS, parseIntrinsic, parseCall, splitArguments };
+    const api = { validateStatements, validateHandlers, emit, referenceText, checkValue, defineCompatibility, parseExpr, exprText, wrapRange, renameVariableReferences, OPERATORS, parseIntrinsic, parseCall, splitArguments };
     if (typeof module !== "undefined" && module.exports) module.exports = api;
     else root.VisualGelModel = api;
 })(globalThis);

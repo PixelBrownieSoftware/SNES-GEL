@@ -59,15 +59,16 @@ semantic highlighting enabled; ambiguous declarations across files may remain un
 Open [the contact editor](tools/contact-editor/index.html) in a browser to configure directed
 entity-type interactions for enter, stay and exit. Each cell names an existing GEL function
 that accepts `(u8 self, u8 other)`. Save or load a JSON configuration and export the generated
-`contact.gel`. Reverse interactions require separate rows. This is an authoring prototype:
-the exported file must be included in the game and its dispatchers connected to the contact
-runtime manually; it does not implement collision detection or activate the existing dispatcher.
+`contact.gel`. Reverse interactions require separate rows. The sample game includes this file
+and dispatches enter, stay and exit events after updating entities. Both participants must be
+marked Contactable and their hitboxes must overlap. Other projects must connect the generated
+dispatchers to their own contact runtime.
 
 With the shared server, recipient choices come from objects marked Contactable in `objects.json`;
 the other participant can be any defined object. Use **Refresh objects and symbols** after edits
 in the object editor. Existing unknown names are retained as unresolved choices and must be
-replaced before saving with the server; they are not silently renamed. Classes without generated
-`OBJ_*` constants are flagged until a level containing them is built.
+replaced before saving with the server; they are not silently renamed. Object definitions also
+receive generated `OBJ_*` constants when their classes are not present in the current level.
 
 Handler blocks use the shared visual GEL modules in `tools/visual-gel/`. Symbol slots open a
 searchable picker; choosing a symbol replaces the slot, while literals and manual expressions
@@ -180,17 +181,16 @@ project; `--assets-dir` overrides its assets folder. The existing editor launche
 this server. Run only one server per port.
 
 The object editor saves `objects.json`: each definition matches a Tiled object class (or its
-fallback name) case-insensitively. Use letters, digits and underscores; the level build still
-assigns numeric IDs. Definitions for classes not present in any built level are retained for
-later. On build, the sample game initializes `Entities[].capabilities` from these definitions.
+fallback name) case-insensitively. Use letters, digits and underscores; the build assigns numeric
+IDs, including for defined classes not present in a built level. On build, the sample game
+initializes `Entities[].capabilities` from these definitions.
 Movable means an object may receive movement intent from a controller or a behavior, not that it
 automatically receives controller input. It can also be moved by forces without intent.
 Ghost, Gravity and Contactable are independent flags.
 
 These are **capability definitions**, not a finished generic object runtime: the sample game's
-existing physics, movement and contact behavior do not yet read these flags. In particular,
-changing a checkbox does not currently change gameplay. `Entities[].flags` remains the legacy
-mode/contact state so the editor's definitions do not collide with player mode bits.
+contact system reads Contactable, but its physics and movement do not yet use the other
+capabilities. `Entities[].flags` holds runtime mode state separately from these capabilities.
 
 ### Object variants
 

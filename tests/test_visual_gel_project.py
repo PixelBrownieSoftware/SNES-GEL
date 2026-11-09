@@ -48,6 +48,78 @@ def test_patches_only_selected_statements_preserving_unsupported_code_and_commen
     assert result == source.replace("e += 1;", "e += 2;")
 
 
+MOVE_SOURCE = ("fn sample(u8 e) {\n"
+               "    u8 a = 1;\n"
+               "    a += e; // use a\n"
+               "    if (e > 1) {\n"
+               "        u8 b = a;\n"
+               "        b += 1;\n"
+               "    }\n"
+               "    while (a < 5) {\n"
+               "        a += 1;\n"
+               "    }\n"
+               "    e = 2;\n"
+               "}\n")
+
+
+def move_payload(tmp_path, names, **extra):
+    (tmp_path / "game.gel").write_text(MOVE_SOURCE, encoding="utf-8", newline="")
+    doc = project.read_document(tmp_path, "game.gel")
+    body = doc["functions"][0]["source"]
+    offsets = {"decl a": "u8 a", "use a": "a += e", "if": "if (e", "while": "while", "e=2": "e = 2"}
+    units = [body.index(offsets[name]) for name in names]
+    root = doc["functions"][0]["rootBlock"]
+    return {"name": "game.gel", "hash": doc["hash"], "function": 0, "units": units, **extra}, root, body
+
+
+def test_moving_control_block_carries_its_contents(tmp_path):
+    payload, root, body = move_payload(tmp_path, ["while"])
+    payload["target"] = {"block": root, "before": body.index("if (e")}
+    _, out = project.apply_moves(tmp_path, payload)
+    assert out.index("while (a < 5) {\n        a += 1;\n    }") < out.index("if (e > 1)")
+    assert out.count("a += 1;") == 1
+
+
+def test_moves_that_break_variable_scope_are_rejected(tmp_path):
+    payload, root, body = move_payload(tmp_path, ["decl a"])
+    payload["target"] = {"block": root, "before": None}
+    with pytest.raises(ValueError):
+        project.apply_moves(tmp_path, payload)
+    payload, root, body = move_payload(tmp_path, ["use a"])
+    payload["target"] = {"block": root, "before": body.index("u8 a")}
+    with pytest.raises(ValueError):
+        project.apply_moves(tmp_path, payload)
+
+
+def test_move_preview_lists_valid_and_invalid_targets(tmp_path):
+    payload, _, _ = move_payload(tmp_path, ["while"], preview=True)
+    result = project.preview_moves(tmp_path, payload)
+    assert result["targets"]
+    assert any(item["ok"] for item in result["targets"])
+
+
+def test_comments_can_be_edited_and_deleted(tmp_path):
+    source = ("fn sample(u8 e) {\n"
+              "    // keep this\n"
+              "    e += 1; // trailing\n"
+              "    /* block\n"
+              "       note */\n"
+              "    e += 2;\n"
+              "}\n")
+    (tmp_path / "game.gel").write_text(source, encoding="utf-8", newline="")
+    doc = project.read_document(tmp_path, "game.gel")
+    fn = doc["functions"][0]
+    assert [c["text"] for c in fn["comments"]] == ["// keep this", "// trailing", "/* block\n       note */"]
+    payload = {"name": "game.gel", "hash": doc["hash"], "function": 0, "changes": [], "addition": ""}
+    _, result = project.apply_changes(tmp_path, {**payload, "comment_changes": [
+        {"index": 0, "text": "new words"}, {"index": 1, "text": None}, {"index": 2, "text": None}]})
+    assert result == ("fn sample(u8 e) {\n    // new words\n    e += 1;\n    e += 2;\n}\n")
+    with pytest.raises(ValueError):
+        project.apply_changes(tmp_path, {**payload, "comment_changes": [{"index": 0, "text": "a\nb"}]})
+    with pytest.raises(ValueError):
+        project.apply_changes(tmp_path, {**payload, "comment_changes": [{"index": 2, "text": "x */ y"}]})
+
+
 def test_control_headers_and_returns_are_editable_without_losing_source(tmp_path):
     source = (
         "fn sample(u8 x) {\r\n"
@@ -142,7 +214,9 @@ def test_visual_layout_nests_controls_without_exposing_structural_punctuation():
 
     items = list(flatten(fn["display"]))
     raw = [item["text"].strip() for item in items if item["kind"] == "raw"]
-    assert raw == ["// outside", "// first body", "/* between */", "asm { NOP }"]
+    assert raw == ["asm { NOP }"]
+    assert [fn["comments"][item["index"]]["text"] for item in items if item["kind"] == "comment"] == [
+        "// outside", "// first body", "/* between */"]
     assert [item["style"] for item in items if item["kind"] == "control"] == [
         "if", "while", "for_each", "switch", "cases"]
     assert len(fn["display"][1]["branches"]) == 3
@@ -155,8 +229,9 @@ def test_comment_in_control_header_is_displayed_without_structural_fragments():
     source = "fn sample(u8 x) { if /* before */ (x /* inside */ > 1) /* after */ { return; } }"
     fn = project.functions(source)[0]
     branch = fn["display"][0]["branches"][0]
-    assert [item.get("text") for item in branch["items"]] == [
-        "/* before */", "if condition", "x /* inside */ > 1", "/* after */"]
+    texts = [fn["comments"][item["index"]]["text"] if item["kind"] == "comment" else item.get("text")
+             for item in branch["items"]]
+    assert texts == ["/* before */", "if condition", "x /* inside */ > 1", "/* after */"]
     assert branch["body"][0]["kind"] == "part"
 
 
@@ -255,3 +330,51 @@ def test_function_removal_finds_cross_file_and_macro_references(tmp_path):
     other.write_bytes(b'// helper()\nfn g() { log("helper"); }\n')
     _, result = project.change_function(tmp_path, payload, symbols)
     assert result == "\n"
+
+
+def test_control_blocks_can_be_removed_but_not_when_scope_breaks(tmp_path):
+    payload, _, _ = move_payload(tmp_path, ["while"])
+    _, out = project.apply_delete(tmp_path, payload)
+    assert "while" not in out and "a += 1;" not in out
+    payload, _, _ = move_payload(tmp_path, ["decl a"])
+    with pytest.raises(ValueError):
+        project.apply_delete(tmp_path, payload)
+
+
+def test_switch_case_can_be_removed(tmp_path):
+    source = ("fn f(u8 e) {\n    switch (e) {\n        case 1:\n            e = 2;\n            break;\n"
+              "        case 3:\n            e = 4;\n            break;\n    }\n}\n")
+    (tmp_path / "game.gel").write_text(source, encoding="utf-8", newline="")
+    doc = project.read_document(tmp_path, "game.gel")
+    body = doc["functions"][0]["source"]
+    payload = {"name": "game.gel", "hash": doc["hash"], "function": 0, "case": body.index("case 1")}
+    _, out = project.apply_delete(tmp_path, payload)
+    assert "case 1" not in out and "e = 2" not in out
+    assert "case 3:\n            e = 4;\n            break;" in out
+
+def test_copy_and_paste_statements(tmp_path):
+    payload, root, body = move_payload(tmp_path, ["while", "e=2"], copy=True)
+    copied = project.copy_code(tmp_path, payload)
+    assert copied["count"] == 2
+    assert copied["lines"] == ["while (a < 5) {", "    a += 1;", "}", "e = 2;"]
+    payload, root, body = move_payload(tmp_path, [])
+    payload.pop("units")
+    payload.update(paste=True, lines=copied["lines"], target={"block": root, "before": None})
+    _, out = project.apply_paste(tmp_path, payload)
+    assert out.count("while (a < 5) {") == 2
+    assert out.endswith("    e = 2;\n}\n")
+    payload["target"] = {"before": body.index("e = 2")}
+    _, out = project.apply_paste(tmp_path, payload)
+    assert out.count("e = 2;") == 2 and out.index("while (a < 5) {\n        a += 1;\n    }\n    while") < out.index("e = 2;")
+
+
+def test_paste_rejects_scope_breaks_and_bad_code(tmp_path):
+    payload, root, body = move_payload(tmp_path, [])
+    payload.pop("units")
+    payload.update(paste=True, target={"block": root, "before": None})
+    with pytest.raises(ValueError):
+        project.apply_paste(tmp_path, {**payload, "lines": ["u8 a = 2;"]})
+    with pytest.raises(ValueError):
+        project.apply_paste(tmp_path, {**payload, "lines": ["a += ;"]})
+    with pytest.raises(ValueError):
+        project.apply_paste(tmp_path, {**payload, "lines": []})

@@ -28,6 +28,7 @@ metasprites = load_editor("metasprite-editor")
 visual_project = load_editor("visual-gel", "project.py")
 visual_memory = load_editor("visual-gel", "memory.py")
 visual_signature = load_editor("visual-gel", "signature.py")
+rom_overview = load_editor("rom-overview", "rom.py")
 
 
 class EditorHandler(SimpleHTTPRequestHandler):
@@ -67,6 +68,13 @@ class EditorHandler(SimpleHTTPRequestHandler):
                 self.send_json(400, {"error": str(error)})
             except OSError as error:
                 self.send_json(500, {"error": str(error)})
+        elif path == "/api/rom-overview":
+            try:
+                self.send_json(200, rom_overview.describe(self.server.project_dir))
+            except (ValueError, UnicodeDecodeError) as error:
+                self.send_json(400, {"error": str(error)})
+            except OSError as error:
+                self.send_json(500, {"error": str(error)})
         elif path == "/api/objects":
             try:
                 self.send_json(200, object_definitions.load(self.server.project_dir / "objects.json"))
@@ -82,8 +90,7 @@ class EditorHandler(SimpleHTTPRequestHandler):
                 path = self.path
             decoded = unquote(path)
             parts = decoded.split("/")
-            if (len(parts) < 3 or parts[1] not in ("editor", "object-editor", "contact-editor", "metasprite-editor", "visual-gel")
-                    or any(part in (".", "..") or "\\" in part for part in parts)
+            if (len(parts) < 3 or parts[1] not in ("editor", "object-editor", "contact-editor",             "metasprite-editor", "visual-gel", "rom-overview")                    or any(part in (".", "..") or "\\" in part for part in parts)
                     or (parts[-1] and Path(parts[-1]).suffix not in (".html", ".js", ".css"))):
                 self.send_error(404)
                 return
@@ -105,6 +112,43 @@ class EditorHandler(SimpleHTTPRequestHandler):
                     target, source = visual_project.apply_changes(self.server.project_dir, data)
                     contacts.atomic_write(target, source.encode("utf-8"))
                     result = visual_project.read_document(self.server.project_dir, target.name)
+                self.send_json(200, result)
+            except (ValueError, UnicodeDecodeError) as error:
+                self.send_json(400, {"error": str(error)})
+            except OSError as error:
+                self.send_json(500, {"error": str(error)})
+        elif path == "/api/rom-config":
+            try:
+                data = json.loads(self.read_body(contacts.MAX_BODY_BYTES).decode("utf-8"))
+                with self.server.gel_lock:
+                    target, text = rom_overview.apply_settings(self.server.project_dir, data)
+                    rom_overview.atomic_write(target, text)
+                    result = rom_overview.describe(self.server.project_dir)
+                self.send_json(200, result)
+            except (ValueError, UnicodeDecodeError) as error:
+                self.send_json(400, {"error": str(error)})
+            except OSError as error:
+                self.send_json(500, {"error": str(error)})
+        elif path == "/api/gel-moves":
+            try:
+                data = json.loads(self.read_body(contacts.MAX_BODY_BYTES).decode("utf-8"))
+                with self.server.gel_lock:
+                    if data.get("preview") is True:
+                        result = visual_project.preview_moves(self.server.project_dir, data)
+                    elif data.get("copy") is True:
+                        result = visual_project.copy_code(self.server.project_dir, data)
+                    elif data.get("paste") is True:
+                        target, source = visual_project.apply_paste(self.server.project_dir, data)
+                        contacts.atomic_write(target, source.encode("utf-8"))
+                        result = visual_project.read_document(self.server.project_dir, target.name)
+                    elif data.get("delete") is True:
+                        target, source = visual_project.apply_delete(self.server.project_dir, data)
+                        contacts.atomic_write(target, source.encode("utf-8"))
+                        result = visual_project.read_document(self.server.project_dir, target.name)
+                    else:
+                        target, source = visual_project.apply_moves(self.server.project_dir, data)
+                        contacts.atomic_write(target, source.encode("utf-8"))
+                        result = visual_project.read_document(self.server.project_dir, target.name)
                 self.send_json(200, result)
             except (ValueError, UnicodeDecodeError) as error:
                 self.send_json(400, {"error": str(error)})

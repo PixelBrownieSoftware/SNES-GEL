@@ -9,11 +9,40 @@
         "gravity": true,
         "contactable": true
       },
-      "editable_fields": [],
-      "variants": []
+      "editable_fields": [
+        "w",
+        "h",
+        "animaddr"
+      ],
+      "variants": [
+        {
+          "id": 0,
+          "name": "Test",
+          "fields": {
+            "w": 22,
+            "h": 45,
+            "animaddr": 2
+          },
+          "values": {},
+          "metasprite_id": 2,
+          "palette_id": null
+        },
+        {
+          "id": 1,
+          "name": "Lady2",
+          "fields": {
+            "w": 35,
+            "h": 50,
+            "animaddr": 1
+          },
+          "values": {},
+          "metasprite_id": 1,
+          "palette_id": null
+        }
+      ]
     },
     {
-      "class": "Gem",
+      "class": "Collectable",
       "flags": {
         "movable": false,
         "ghost": false,
@@ -27,13 +56,13 @@
       "variants": [
         {
           "id": 0,
-          "name": "coin",
+          "name": "gem",
           "fields": {
-            "w": 25,
-            "h": 25
+            "w": 8,
+            "h": 16
           },
           "values": {},
-          "metasprite_id": 1,
+          "metasprite_id": 0,
           "palette_id": null
         }
       ]
@@ -46,8 +75,71 @@
         "gravity": false,
         "contactable": true
       },
-      "editable_fields": [],
-      "variants": []
+      "editable_fields": [
+        "w",
+        "h"
+      ],
+      "variants": [
+        {
+          "id": 0,
+          "name": "spring",
+          "fields": {
+            "w": 20,
+            "h": 25
+          },
+          "values": {},
+          "metasprite_id": 3,
+          "palette_id": null
+        },
+        {
+          "id": 1,
+          "name": "destructable",
+          "fields": {
+            "w": 20,
+            "h": 25
+          },
+          "values": {},
+          "metasprite_id": 3,
+          "palette_id": 1
+        },
+        {
+          "id": 2,
+          "name": "Variant 2",
+          "fields": {
+            "h": 25,
+            "w": 17
+          },
+          "values": {},
+          "metasprite_id": 3,
+          "palette_id": null
+        }
+      ]
+    },
+    {
+      "class": "DashPoint",
+      "flags": {
+        "movable": false,
+        "ghost": false,
+        "gravity": false,
+        "contactable": true
+      },
+      "editable_fields": [
+        "w",
+        "h"
+      ],
+      "variants": [
+        {
+          "id": 0,
+          "name": "DashPoint",
+          "fields": {
+            "w": 20,
+            "h": 25
+          },
+          "values": {},
+          "metasprite_id": 1,
+          "palette_id": 0
+        }
+      ]
     }
   ]
 }

@@ -4,6 +4,7 @@
 import sys
 import os
 import glob
+import json
 from PIL import Image
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -38,7 +39,7 @@ def encode_4bpp_8x8(tile_pixels):
         tile_bytes[16 + row * 2 + 1] = b3
     return tile_bytes
 
-def process_asset_folder(folder_path, out_dir, first_level_bank=0x84):
+def process_asset_folder(folder_path, out_dir, first_level_bank=0x84, asset_start=0xC000):
     png_files = glob.glob(os.path.join(folder_path, "*.png"))
     if not png_files:
         print(f"WARNING: No PNG files found in '{folder_path}/'.")
@@ -49,15 +50,21 @@ def process_asset_folder(folder_path, out_dir, first_level_bank=0x84):
     asm_lines = ["; Auto-generated asset binary inclusions\n"]
 
     # Assets live high in bank $00 (DMA source bank is 0) so code can grow from $8000.
-    current_rom_bank_offset = 0xC000
+    current_rom_bank_offset = asset_start
 
     # Layer PNGs referenced by a metasprite project are packed through it (deduplicated),
     # so they are not also emitted as standalone assets.
     projects = metasprite_pack.load_projects(folder_path)
     consumed = metasprite_pack.consumed_sources(projects)
+    infos, next_pal = [], 0
     for path, data in projects:
+        info = {}
         current_rom_bank_offset = metasprite_pack.pack_project(
-            path, data, folder_path, out_dir, gel_lines, asm_lines, current_rom_bank_offset)
+            path, data, folder_path, out_dir, gel_lines, asm_lines, current_rom_bank_offset,
+            pal_base=next_pal, info=info)
+        next_pal += len(info['slots'])
+        infos.append(info)
+    metasprite_pack.write_loader(infos, out_dir)
 
     # A Tiled map replaces the level PNG of the same name.
     tiled_levels = {}
@@ -183,8 +190,11 @@ def process_asset_folder(folder_path, out_dir, first_level_bank=0x84):
         print(f"ERROR: assets end at ${current_rom_bank_offset:04X}, past the ${ROM_ASSET_LIMIT:04X} "
               f"limit ({current_rom_bank_offset - ROM_ASSET_LIMIT} bytes too many).")
         sys.exit(1)
-    print(f"Assets use {current_rom_bank_offset - 0xC000} bytes "
+    print(f"Assets use {current_rom_bank_offset - asset_start} bytes "
           f"({ROM_ASSET_LIMIT - current_rom_bank_offset} free).")
+
+    with open(os.path.join(out_dir, "assets.layout.json"), "w") as f:
+        json.dump({"start": asset_start, "end": current_rom_bank_offset, "limit": ROM_ASSET_LIMIT}, f)
 
     with open(os.path.join(out_dir, GEL_HEADER), "w") as f:
         f.write("\n".join(gel_lines) + "\n")
@@ -195,13 +205,14 @@ def process_asset_folder(folder_path, out_dir, first_level_bank=0x84):
     print(f"\nOK Successfully generated '{GEL_HEADER}' and '{ASM_HEADER}'.")
 
 if __name__ == "__main__":
-    # usage: png_to_snes_tiles.py <assets_folder> <output_folder> [first_level_bank]
+    # usage: png_to_snes_tiles.py <assets_folder> <output_folder> [first_level_bank] [asset_start]
     folder = sys.argv[1] if len(sys.argv) > 1 else ASSETS_DIR
     out = sys.argv[2] if len(sys.argv) > 2 else folder
     first_bank = int(sys.argv[3], 0) if len(sys.argv) > 3 else 0x84
+    start = int(sys.argv[4], 0) if len(sys.argv) > 4 else 0xC000
     if not os.path.exists(folder):
         os.makedirs(folder)
         print(f"Created '{folder}' directory. Put your PNG files there!")
     else:
         os.makedirs(out, exist_ok=True)
-        process_asset_folder(folder, out, first_bank)
+        process_asset_folder(folder, out, first_bank, start)

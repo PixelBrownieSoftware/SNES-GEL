@@ -1,5 +1,6 @@
 #include "snes.gel"
 #include "assets.gel"
+#include "metasprites.gel"
 #include "sound.gel"
 #include "object-definitions.gel"
 
@@ -7,8 +8,8 @@
 #define PLAYER_ACCEL        0.15
 #define FRICTION            0.25
 #define PLAYER_MAX_SPEED    1.5
-#define DASH_SPEED          8.0
-#define DASH_DURATION       8
+#define DASH_SPEED          5.0
+#define DASH_DURATION       16
 #define DASH_EXIT_SPEED     3.0
 
 #define GRAVITY             0.3
@@ -24,21 +25,10 @@
 #define CAM_OFFSET_X        119
 #define CAM_OFFSET_Y        96
 
-#define SPRITE_PALETTE_ADDR PLAYER_MS_PAL0
 #define SPRITE_TILES_ADDR   PLAYER_MS_TILES
 
-// Table for metasprite headers, used for alignment and frame data.
-// Pinned at $1000 (WRAM, just after TextMap's $0800-$0FFF) so it can't collide with the
-// auto-placed tables that start at $0600.
-struct_table MetaspriteHeader[2] @ 0x1000 {
-    u16 frame_table;   // Pointer to MS frame definitions
-    u16 anim_table;   // Pointer to MS animation definitions
-    u16 off_x;         // Normal X alignment offset table
-    u16 off_mirror_x;  // Mirrored X alignment offset table
-    u16 off_y;         // Y alignment offset table
-    u8  tile_base;     // First VRAM tile of this metasprite's tiles
-    u8  attr;          // Base OAM attribute bits (priority); palettes come from the frame data
-};
+// The MetaspriteHeader table (pinned at $1000, just after TextMap's $0800-$0FFF) and
+// ms_load_all() are generated from the metasprite editor's projects: see metasprites.gel.
 
 enum PlayerState {
     STATE_IDLE,
@@ -91,10 +81,6 @@ u8 player_footstep_sfx4 = 0;
 u8 player_footstep_sfx5 = 0;
 u8 footstep_timer = 0;
 u8 footstep_index = 0;
-u16 player_test_anim_files = SPRITE_TILES_ADDR;
-u16 player_curr_anim = 0;
-u16 player_anim_addr = 0;
-i8 dummy_number =0;
 
 // ---------------- Level map streaming ----------------
 #include "level-data.gel"
@@ -346,6 +332,8 @@ fn move_x(u16 e) {
             Entities[e].x++;
             moved = 1;
             dx--;
+        
+            Entities[e].dirx = 1;
         }
     }
     while (dx < 0) {
@@ -364,6 +352,8 @@ fn move_x(u16 e) {
             Entities[e].x--;
             moved = 1;
             dx++;
+        
+            Entities[e].dirx = -1;
         }
     }
     if (moved) { step_down(e); }
@@ -395,53 +385,9 @@ fn move_y(u16 e) {
     }
 }
 
-// ---------------- Bullets ----------------
-// Disabled together with the bullet code below; the table would otherwise reserve RAM.
-// struct_table Bullets[16] {
-//     i16 x;
-//     i16 y;
-//     i16 vx;
-// }
-
-// fn spawn_bullet() {
-//     Bullets.create();
-//     u16 slot = reg(X);
-
-//     if (slot != 0xFFFF) {
-//         Bullets[slot].y = player_y + 20;
-//         if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
-//             Bullets[slot].x  = player_x - 4;
-//             Bullets[slot].vx = -BULLET_SPEED;
-//         } else {
-//             Bullets[slot].x  = player_x + HB_W;
-//             Bullets[slot].vx = BULLET_SPEED;
-//         }
-//     }
-// }
-
-// fn update_bullets() {
-//     Bullets.for_each(b) {
-//         Bullets[b].x += Bullets[b].vx;
-//         i16 sx = Bullets[b].x - cam_x;
-
-//         if (sx < 0) {
-//             Bullets[b].free();
-//         } else if (sx > 248) {
-//             Bullets[b].free();
-//         } else if (solid_at(Bullets[b].x + 4, Bullets[b].y + 4)) {
-//             Bullets[b].free();
-//         }
-//     }
-// }
-
-// fn draw_bullets() {
-//     Bullets.for_each(b) {
-//         std_draw_sprite(Bullets[b].x - cam_x, Bullets[b].y - cam_y, SPRITES_TILE_COUNT, 0x32);
-//     }
-// }
-
 #include "player.gel"
 #include "entities.gel"
+#include "contact.gel"
 i16 cam_calc_x = 0;
 i16 cam_calc_y = 0;
 
@@ -457,67 +403,18 @@ fn update_camera(u16 e) {
     cam_y = cam_calc_y;
 }
 
-// Runs once per logic step, so animation speed is tied to the 60 Hz tick, not the frame rate.
-// The clip is chosen from the entity's physics state alone (grounded, moving, airborne);
-// update_anim never looks at what the clip contains.
+// Advances the selected clip once per logic step.
 fn update_anim(u16 e) {
-    u8 want = PLAYER_MS_ANIM_IDLE;
-    if (!bit_test(Entities[e].flags, MODE_FLAG_ON_GROUND)) {
-        want = PLAYER_MS_ANIM_AIR;
-    } else if (Entities[e].state != STATE_IDLE) {
-        want = PLAYER_MS_ANIM_RUN;
-    }
-    if (want != Entities[e].clip) {
-        Entities[e].clip = want;
-        Entities[e].step = 0;
-        Entities[e].timer = 0;
-    }
+    u16 anim_ind = Entities[e].animaddr;
+    u16 anim_table = MetaspriteHeader[anim_ind].anim_table;
+
     Entities[e].timer += 1;
-    if (Entities[e].timer >= std_anim_ticks(PLAYER_MS_ANIMS, Entities[e].clip, Entities[e].step)) {
+    if (Entities[e].timer >= std_anim_ticks(anim_table, Entities[e].clip, Entities[e].step)) {
         Entities[e].timer = 0;
-        Entities[e].step = std_anim_next(PLAYER_MS_ANIMS, Entities[e].clip, Entities[e].step);
+        Entities[e].step = std_anim_next(anim_table, Entities[e].clip, Entities[e].step);
     }
+
 }
-
-// Per-frame draw offset (16-bit) from a packer table: NORMAL_X, MIRROR_X or Y.
-//We're gonna need to refer to more than just the player
-//And refer to each layer's offset seperately
-// fn player_ms_off(u16 table, u8 frame) {
-//     u16 p = table + frame + frame;
-//     u16 lo = peek8(p);
-//     p++;
-//     u16 hi = peek8(p);
-//     return lo | (hi << 8);
-// }
-
-// fn render_player() {
-//     dummy_number = -2;
-//     if (Entities[0].type != OBJ_PLAYERSTART) { return; }
-//     //PLAYER_MS_ANIMS
-//     u16 animaddr = Entities[0].animaddr;
-//     u16 anim_table = MetaspriteHeader[animaddr].anim_table;
-//     u16 frame_table = MetaspriteHeader[animaddr].frame_table;
-//     u16 off_x = MetaspriteHeader[animaddr].off_x;
-//     u16 off_y = MetaspriteHeader[animaddr].off_y;
-//     u16 off_mirror_x = MetaspriteHeader[animaddr].off_mirror_x;
-//     u8 frame = std_anim_frame(anim_table, Entities[0].clip, Entities[0].step);
-//     // The artwork faces left, so facing right (flag 0) is the flipped case.
-//     u8 attr = MetaspriteHeader[animaddr].attr | OAM_HFLIP;
-//     i16 draw_x = player_x - ms_table_off(off_mirror_x, frame);
-//     if (bit_test(mode_flags, MODE_FLAG_DIRECTION)) {
-//         bit_clear(attr, OAMB_HFLIP);
-//         draw_x = player_x - ms_table_off(off_x, frame);
-//     }
-//     std_draw_frame(
-//         frame_table,
-//         frame,
-//         draw_x - cam_x,
-//         player_y - ms_table_off(off_y, frame) - cam_y,
-//         attr,
-//         MetaspriteHeader[animaddr].tile_base
-//     );
-//     player_curr_anim = Entities[0].step;
-// }
 
 // The HUD text only changes with the ability, so it is redrawn then (255 forces the first draw).
 #define HUD_UNDRAWN 255
@@ -570,10 +467,10 @@ fn game_tick() {
         poll_input();
         update_player(PLAYER_ENT);
         update_camera(PLAYER_ENT);
-        update_anim(PLAYER_ENT);
         update_entities();
-        // update_bullets();
+        update_entity_contacts();
         steps -= 1;
+    
     }
     std_sound_update();
     // draw_bullets();
@@ -605,37 +502,15 @@ fn init_game() {
 
     // 2. Upload palettes and tile graphics while the screen is blanked.
     //    OBJ palettes occupy CGRAM 128-255, i.e. palette indices 8-15.
-    std_load_palette(8, SPRITE_PALETTE_ADDR, 16);
-    std_load_vram(0x0000, SPRITE_TILES_ADDR, PLAYER_MS_BYTE_LEN);
-    // Bullet tile sits right after the player's tiles, using OBJ palette 1 (CGRAM 144).
-    std_load_palette(9, BULLET_PALETTE, 16);
-    std_load_vram(PLAYER_MS_TILE_COUNT * 16, BULLET_TILES, BULLET_BYTE_LEN);
-    // Bouncer sheet: OBJ palette 2 (CGRAM 160), tiles from index 48.
-    std_load_palette(10, SPRING_MS_PAL2, 16);
-    std_load_vram(BOUNCE_TILE * 16, SPRING_MS_TILES, SPRING_MS_BYTE_LEN);
+    //    ms_load_all() (generated in metasprites.gel) loads every metasprite project's
+    //    palettes and tiles and fills the MetaspriteHeader table; everything else follows it.
+    ms_load_all();
+    // Bullet tile sits right after the metasprites' tiles, in the next free OBJ palette.
+    std_load_palette(8 + MS_PAL_END, BULLET_PALETTE, 16);
+    std_load_vram(MS_TILE_END * 16, BULLET_TILES, BULLET_BYTE_LEN);
     std_text_init(FONT_PALETTE, FONT_TILES, FONT_BYTE_LEN);
     std_level_setup(TERRAIN_PALETTE, TERRAIN_TILES, TERRAIN_BYTE_LEN, LEVEL_SC_SIZE);
 
-    // Load metasprite headers for player and spring
-    // Quite a crude implementation, but we'll have this for now.
-
-    MetaspriteHeader.create();
-    MetaspriteHeader[0].frame_table = PLAYER_MS_FRAMES;
-    MetaspriteHeader[0].anim_table = PLAYER_MS_ANIMS;
-    MetaspriteHeader[0].off_x = PLAYER_MS_NORMAL_X;
-    MetaspriteHeader[0].off_mirror_x = PLAYER_MS_MIRROR_X;
-    MetaspriteHeader[0].off_y = PLAYER_MS_Y;
-    MetaspriteHeader[0].tile_base = 0;
-    MetaspriteHeader[0].attr = OAM_PRIO3;
-
-    MetaspriteHeader.create();
-    MetaspriteHeader[1].frame_table = SPRING_MS_FRAMES;
-    MetaspriteHeader[1].anim_table = SPRING_MS_ANIMS;
-    MetaspriteHeader[1].off_x = SPRING_MS_NORMAL_X;
-    MetaspriteHeader[1].off_mirror_x = SPRING_MS_MIRROR_X;
-    MetaspriteHeader[1].off_y = SPRING_MS_Y;
-    MetaspriteHeader[1].tile_base = BOUNCE_TILE;
-    MetaspriteHeader[1].attr = BOUNCE_ATTR;
     // Sky-blue backdrop (colour 0 shows wherever no layer draws).
     CGADD  = 0;
     CGDATA = 0x8A;
@@ -670,4 +545,14 @@ fn init_game() {
     while (running) {
         game_tick();
     }
+}
+
+fn set_anim(u16 e, u16 want_anim, u8 is_reset) {
+    if (is_reset == 1) {
+    
+        Entities[e].timer = 0;
+        Entities[e].step = 0;
+        
+    }
+    Entities[e].clip = want_anim;
 }

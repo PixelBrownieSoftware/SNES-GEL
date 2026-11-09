@@ -1,10 +1,27 @@
 fn collect(u8 self, u8 other) {
     gems_collected += 1;
+    std_sfx_play(gem_sfx,15,8,6);
     Entities[other].free();
 }
 
 fn bounce(u8 self, u8 other) {
-    Entities[self].vy = -JUMP_SPEED;
+    if (Entities[self].bounce && Entities[self].vx < 0.0) {
+        return 0;
+    }
+    f16 bounce_height = -BOUNCE_SPEED;
+    Entities[self].bounce = 1;
+    switch (Entities[other].param) {
+        case 1:
+            bounce_height = -BOUNCE_SPEED / 2.0;
+            Entities[other].free();
+            break;
+        case 2:
+            Entities[self].dash += 10;
+            bounce_height = 0;
+            break;
+    }
+    Entities[self].vy = bounce_height;
+    set_anim(other, SPRING_MS_ANIM_BOUNCE, 1);
 }
 
 fn entity_on_contact(u8 self, u8 other) {
@@ -12,12 +29,12 @@ fn entity_on_contact(u8 self, u8 other) {
     u8 other_type = Entities[other].type;
 
     switch (self_type) {
-        case PLAYER:
+        case OBJ_PLAYERSTART:
             switch (other_type) {
-                case GEM:
+                case OBJ_COLLECTABLE:
                     collect(self, other);
                     break;
-                case SPRING:
+                case OBJ_BOUNCER:
                     bounce(self, other);
                     break;
             }

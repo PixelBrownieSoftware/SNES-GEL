@@ -59,12 +59,8 @@
         <button id="layer-swap-back" class="button secondary" title="Swap this layer with the one behind it, in this frame only">▲ Back</button>
         <button id="layer-swap-front" class="button secondary" title="Swap this layer with the one in front of it, in this frame only">▼ Front</button>
       </div>
-      <div class="cell-row layer-frame-row" title="Layer offsets are per pixel. Hold Shift while dragging the purple anchor to snap to 8-pixel increments.">
-        <span class="toolbar-label">Anchor</span>
-        <input id="layer-anchor-x" type="number" step="8" value="0" aria-label="Layer anchor X offset in pixels">
-        <input id="layer-anchor-y" type="number" step="8" value="0" aria-label="Layer anchor Y offset in pixels">
-        <span class="toolbar-label">px</span>
-        <button id="layer-frame-reset" class="button quiet" title="Reset this layer's offset and every layer's draw order for this frame">Reset</button>
+      <div class="cell-row layer-frame-row" title="Applies to the current frame only">
+        <button id="layer-frame-reset" class="button quiet" title="Reset every layer's draw order for this frame">Reset order</button>
       </div>
       <div class="cell-row">
         <span class="toolbar-label">Cell</span>
@@ -92,7 +88,7 @@
           <button id="move-tool" class="button secondary" aria-pressed="false">Move</button>
           <button id="stamp-tool" class="button secondary" disabled aria-pressed="false">Stamp</button>
           <button id="eraser-tool" class="button secondary" aria-pressed="false" title="Click or drag to erase tiles on the current layer (E)">Eraser</button>
-          <button id="anchor-tool" class="button secondary" aria-pressed="false" title="Drag anchors on the canvas; hold Shift to snap the selected-layer anchor to 8-pixel increments; click again to cycle targets">Anchors</button>
+          <button id="anchor-tool" class="button secondary" aria-pressed="false" title="Drag anchors on the canvas; click again to switch between the sprite anchor (mirror axis) and the origin (where the entity's top-left sits)">Anchors</button>
         </div>
       </div>
       <div id="stage-wrap" class="canvas-wrap stage-wrap">
@@ -107,7 +103,7 @@
         <button id="copy-layer-all" class="button quiet" title="Copy this layer's tiles to every frame (for parts that never move)">Layer → all frames</button>
         <span class="toolbar-separator"></span>
         <label class="check-label"><input id="show-onion" type="checkbox" checked> Onion skin</label>
-        <label class="check-label"><input id="show-collision" type="checkbox" checked> Hitbox</label>
+        <label class="check-label"><input id="show-collision" type="checkbox" checked> Test hitbox</label>
         <label class="check-label"><input id="show-grid" type="checkbox" checked> Grid</label>
         <label class="check-label"><input id="show-anchor" type="checkbox" checked> Anchors</label>
         <span class="toolbar-spacer"></span>
@@ -123,13 +119,13 @@
           <input id="stage-rows" type="number" min="1" max="64" value="6" aria-label="Canvas height in tiles">
           tiles
         </label>
-        <label class="stage-size-label">Hitbox
-          <input id="collision-width" type="number" min="1" max="128" value="18" aria-label="Collision box width in pixels">
+        <label class="stage-size-label" title="Preview only: a stand-in box to judge the sprite against. The real hitbox is the w/h fields in the object editor.">Test hitbox
+          <input id="collision-width" type="number" min="1" max="128" value="18" aria-label="Test hitbox width in pixels">
           ×
-          <input id="collision-height" type="number" min="1" max="128" value="46" aria-label="Collision box height in pixels">
+          <input id="collision-height" type="number" min="1" max="128" value="46" aria-label="Test hitbox height in pixels">
           px
         </label>
-        <span class="anchor-readout">Sprite / hitbox: <code id="anchor-position">0, 0</code></span>
+        <span class="anchor-readout">Sprite / origin: <code id="anchor-position">0, 0</code></span>
         <button id="frame-anchor-reset" class="button quiet" title="Make this frame use the project sprite anchor again">Reset frame anchor</button>
       </div>
 

@@ -63,7 +63,6 @@
   const curFrame = () => model.frames[ui.frame] || null;
   const curParts = () => (curFrame() && curFrame().layers[ui.layer]) || [];
   const frameOrder = (f) => Pack.layerOrder(f, model.layers.length);
-  const layerOff = (f, li) => (f ? Pack.layerOffset(f, li) : { x: 0, y: 0 });
 
   function newFrame(name) {
     return { name, layers: model.layers.map(() => []) };
@@ -250,11 +249,9 @@
     for (const li of frameOrder(frame)) {
       const layer = model.layers[li];
       if (!layer.visible || !layer.canvas) continue;
-      const lo = layerOff(frame, li);
       for (const p of frame.layers[li] || []) {
-        const px = p.x + lo.x;
-        const x = (mirrored ? 2 * fa.x - px - TS : px) + sx;
-        drawTile(ctx, layer, p, (ox + x) * zoom, (oy + p.y + lo.y + sy) * zoom, zoom, !!p.hflip !== mirrored, !!p.vflip);
+        const x = (mirrored ? 2 * fa.x - p.x - TS : p.x) + sx;
+        drawTile(ctx, layer, p, (ox + x) * zoom, (oy + p.y + sy) * zoom, zoom, !!p.hflip !== mirrored, !!p.vflip);
       }
     }
     ctx.restore();
@@ -318,9 +315,7 @@
     }
 
     const parts = curParts();
-    const lo = layerOff(curFrame(), ui.layer);
     ctx.save();
-    ctx.translate(lo.x * z, lo.y * z);
     for (const i of ui.selection) {
       const p = parts[i];
       if (!p) continue;
@@ -362,10 +357,6 @@
       const fa = frameAnchor(ui.frame);
       cross(ctx, (ox + fa.x) * z, (oy + fa.y) * z, 7, ui.activeAnchor === "sprite" ? "#fff08a" : "#f5ca74", ui.activeAnchor === "sprite" ? 3 : 2);
       cross(ctx, (ox + model.hitboxAnchor.x) * z, (oy + model.hitboxAnchor.y) * z, 6, ui.activeAnchor === "hitbox" ? "#73e0c1" : "#ff7777", ui.activeAnchor === "hitbox" ? 3 : 2);
-      if (curLayer()) {
-        const lo = layerOff(curFrame(), ui.layer);
-        cross(ctx, (ox + lo.x) * z, (oy + lo.y) * z, 8, "#c084fc", ui.activeAnchor === "layer" ? 3 : 2);
-      }
     }
     ctx.strokeStyle = "#d9e3ed";
     ctx.lineWidth = 2;
@@ -518,14 +509,11 @@
     });
     const layer = curLayer();
     const f = curFrame();
-    const lo = layerOff(f, ui.layer);
     const pos = f && layer ? frameOrder(f).indexOf(ui.layer) : -1;
-    $("layer-anchor-x").value = lo.x;
-    $("layer-anchor-y").value = lo.y;
     $("layer-order-info").textContent = pos >= 0 ? `depth ${pos + 1}/${model.layers.length}` : "";
     $("layer-swap-back").disabled = pos <= 0;
     $("layer-swap-front").disabled = pos < 0 || pos >= model.layers.length - 1;
-    for (const id of ["layer-anchor-x", "layer-anchor-y", "layer-frame-reset"]) $(id).disabled = !layer || !f;
+    $("layer-frame-reset").disabled = !layer || !f;
     $("cell-w").value = layer ? layer.cell.w : model.stage.columns;
     $("cell-h").value = layer ? layer.cell.h : model.stage.rows;
     $("source-hint").textContent = layer
@@ -652,7 +640,12 @@
       `  x - ${p}_OFF_X_NORMAL, y - ${p}_OFF_Y,\n` +
       `  OAM_PRIO3, 0);\n` +
       `// clips: std_anim_frame / std_anim_ticks /\n` +
-      `// std_anim_next(${p}_ANIMS, clip, step)`;
+      `// std_anim_next(${p}_ANIMS, clip, step)` +
+      (model.clips.length
+        ? `\n\n// exported animation IDs:\n` +
+          `#define ${p}_ANIM_COUNT ${model.clips.length}\n` +
+          model.clips.map((c, i) => `#define ${p}_ANIM_${ident(c.name)} ${i}`).join("\n")
+        : "");
     $("sprite-title").textContent = `${model.name || "Untitled"} metasprite`;
     const fa = frameAnchor(ui.frame);
     $("anchor-position").textContent = `${fa.x}, ${fa.y}${model.frames[ui.frame]?.anchor ? " (frame)" : ""} · ${model.hitboxAnchor.x}, ${model.hitboxAnchor.y}`;
@@ -761,7 +754,6 @@
     model.layers.splice(i, 0, copy);
     model.frames.forEach((f) => {
       f.layers.splice(i, 0, []);
-      if (f.layerAnchors) f.layerAnchors.splice(i, 0, null);
       if (f.order) {
         const order = f.order.map((k) => (k >= i ? k + 1 : k));
         const at = order.indexOf(i + 1);
@@ -782,7 +774,6 @@
     model.layers.splice(i, 1);
     model.frames.forEach((f) => {
       f.layers.splice(i, 1);
-      if (f.layerAnchors) f.layerAnchors.splice(i, 1);
       if (f.order) f.order = f.order.filter((k) => k !== i).map((k) => (k > i ? k - 1 : k));
     });
     ui.layer = clamp(ui.layer, 0, Math.max(0, model.layers.length - 1));
@@ -797,7 +788,6 @@
     [model.layers[i], model.layers[j]] = [model.layers[j], model.layers[i]];
     model.frames.forEach((f) => {
       [f.layers[i], f.layers[j]] = [f.layers[j], f.layers[i]];
-      if (f.layerAnchors) [f.layerAnchors[i], f.layerAnchors[j]] = [f.layerAnchors[j], f.layerAnchors[i]];
       if (f.order) f.order = f.order.map((k) => (k === i ? j : k === j ? i : k));
     });
     ui.layer = j;
@@ -966,8 +956,7 @@
   function stagePoint(e) {
     const rect = stage.getBoundingClientRect();
     const { ox, oy } = stageGeometry();
-    const lo = ui.tool === "anchor" ? { x: 0, y: 0 } : layerOff(curFrame(), ui.layer);
-    return { x: (e.clientX - rect.left) / ui.scale - ox - lo.x, y: (e.clientY - rect.top) / ui.scale - oy - lo.y };
+    return { x: (e.clientX - rect.left) / ui.scale - ox, y: (e.clientY - rect.top) / ui.scale - oy };
   }
 
   const snap = (v) => Math.floor(v / TS) * TS;
@@ -993,10 +982,6 @@
 
   stage.addEventListener("pointerdown", (e) => {
     if (e.button !== 0 || !curFrame()) return;
-    if (ui.tool === "anchor" && ui.activeAnchor === "layer" && !curLayer()) {
-      toast("Select a layer before moving its anchor.");
-      return;
-    }
     stage.setPointerCapture(e.pointerId);
     const pt = stagePoint(e);
     if (ui.tool === "anchor") {
@@ -1054,17 +1039,6 @@
   const snapTile = (value) => Math.round(value / TS) * TS;
 
   function setAnchor(pt) {
-    if (ui.activeAnchor === "layer") {
-      const f = curFrame();
-      if (!f || !curLayer()) return;
-      const x = snapTile(pt.x), y = snapTile(pt.y);
-      f.layerAnchors = model.layers.map((_, li) => li === ui.layer ? { x, y } : layerOff(f, li));
-      renderLayers();
-      renderStage();
-      renderPreviews();
-      renderReport();
-      return;
-    }
     const target = anchorTarget();
     target.x = Math.round(pt.x);
     target.y = Math.round(pt.y);
@@ -1207,11 +1181,9 @@
   }
 
   // ---- persistence -----------------------------------------------------------
-  // Per-frame layer anchors and draw order are only written when they differ from the defaults.
+  // Draw order is only written when it differs from the default.
   function frameLayerExtras(f) {
     const extras = {};
-    const anchors = model.layers.map((_, li) => layerOff(f, li));
-    if (anchors.some((a) => a.x || a.y)) extras.layerAnchors = anchors;
     const order = frameOrder(f);
     if (order.some((li, i) => li !== i)) extras.order = order;
     return extras;
@@ -1411,12 +1383,6 @@
 
   function loadLayerExtras(f) {
     const extras = {};
-    if (Array.isArray(f.layerAnchors)) {
-      extras.layerAnchors = model.layers.map((_, li) => {
-        const a = Pack.layerOffset(f, li);
-        return { x: snapTile(a.x), y: snapTile(a.y) };
-      });
-    }
     if (Array.isArray(f.order)) extras.order = Pack.layerOrder(f, model.layers.length);
     return extras;
   }
@@ -1466,12 +1432,17 @@
       name: f.name || `frame${i}`,
       ...(f.anchor ? { anchor: { x: int(f.anchor.x), y: int(f.anchor.y) } } : {}),
       ...loadLayerExtras(f),
-      layers: model.layers.map((_, li) => (f.layers[li] || []).map((p) => {
-        const o = { sheetX: int(p.sheetX), sheetY: int(p.sheetY), x: int(p.x), y: int(p.y) };
+      layers: model.layers.map((_, li) => {
+        // Legacy per-layer anchors are folded into the part positions.
+        const la = f.layerAnchors?.[li];
+        const dx = int(la?.x), dy = int(la?.y);
+        return (f.layers[li] || []).map((p) => {
+        const o = { sheetX: int(p.sheetX), sheetY: int(p.sheetY), x: int(p.x) + dx, y: int(p.y) + dy };
         if (p.hflip) o.hflip = true;
         if (p.vflip) o.vflip = true;
         return o;
-      }))
+        });
+      })
     }));
     if (!model.frames.length) model.frames.push(newFrame("frame0"));
     model.clips = (converted.clips || []).map((c) => ({
@@ -1777,28 +1748,13 @@
     renderAll();
   }
 
-  function setLayerAnchor() {
-    const f = curFrame();
-    if (!f || !curLayer()) return;
-    const x = snapTile(int($("layer-anchor-x").value)), y = snapTile(int($("layer-anchor-y").value));
-    const cur = layerOff(f, ui.layer);
-    if (x !== cur.x || y !== cur.y) {
-      pushUndo();
-      f.layerAnchors = model.layers.map((_, li) => (li === ui.layer ? { x, y } : layerOff(f, li)));
-    }
-    renderAll();
-  }
-
   $("layer-swap-back").addEventListener("click", () => swapLayerDepth(-1));
   $("layer-swap-front").addEventListener("click", () => swapLayerDepth(1));
-  $("layer-anchor-x").addEventListener("change", setLayerAnchor);
-  $("layer-anchor-y").addEventListener("change", setLayerAnchor);
   $("layer-frame-reset").addEventListener("click", () => {
     const f = curFrame();
-    if (!f || (!f.order && !f.layerAnchors)) return;
+    if (!f || !f.order) return;
     pushUndo();
     delete f.order;
-    delete f.layerAnchors;
     renderAll();
   });
   $("frame-anchor-reset").addEventListener("click", () => {
@@ -1809,11 +1765,10 @@
   });
   $("anchor-tool").addEventListener("click", () => {
     if (ui.tool === "anchor") {
-      ui.activeAnchor = ({ sprite: "hitbox", hitbox: "layer", layer: "sprite" })[ui.activeAnchor];
+      ui.activeAnchor = ui.activeAnchor === "sprite" ? "hitbox" : "sprite";
     }
     setTool("anchor");
-    const target = ui.activeAnchor === "layer" ? `layer "${curLayer()?.name || "none"}" (purple)` : ui.activeAnchor;
-    toast(`Drag the ${target} anchor on the canvas. Hold Shift to snap to 8px. Click Anchors again to switch targets.`);
+    toast(`Drag the ${ui.activeAnchor} anchor on the canvas. Click Anchors again to switch targets.`);
   });
   $("undo-button").addEventListener("click", undo);
   $("flip-h").addEventListener("click", () => flipSelection("h"));
@@ -1893,14 +1848,9 @@
       e.preventDefault();
       if (ui.tool === "anchor") {
         pushUndo();
-        if (ui.activeAnchor === "layer") {
-          const current = layerOff(curFrame(), ui.layer);
-          setAnchor({ x: current.x + d[0] * TS, y: current.y + d[1] * TS });
-        } else {
-          const t = anchorTarget();
-          t.x += d[0]; t.y += d[1];
-          renderAll();
-        }
+        const t = anchorTarget();
+        t.x += d[0]; t.y += d[1];
+        renderAll();
       } else if (ui.selection.size) {
         pushUndo();
         const step = e.shiftKey ? 1 : TS;

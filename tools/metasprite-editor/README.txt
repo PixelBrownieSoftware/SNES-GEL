@@ -38,8 +38,10 @@ WORKFLOW
    selection and set the hardware flip flag, so a back arm can reuse the front
    arm's tiles at no ROM cost. Delete erases.
 6. Anchors tool: click the canvas to place the sprite anchor (the mirror axis
-   used for left/right facing) and hitbox anchor (click the tool again to
-   switch). The red box is the hitbox; set its size in the footer.
+   used for left/right facing) and the origin, which is the entity's top-left
+   corner (click the tool again to switch). The red box is a TEST hitbox only,
+   to judge the art against; set its size in the footer. The real hitbox size
+   is the w/h fields in the object editor, which draws it over the sprite.
 7. Clips (right): a clip is a list of (frame, ticks). 1 tick = 1/60 s. Press
    Play to preview, optionally mirrored.
 8. Save project writes <name>.metasprite.json into the folder (new layer PNGs

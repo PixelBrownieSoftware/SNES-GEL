@@ -2,15 +2,15 @@
   "version": 1,
   "interactions": [
     {
-      "self": "PLAYER",
-      "other": "GEM",
+      "self": "OBJ_PLAYERSTART",
+      "other": "OBJ_COLLECTABLE",
       "enter": "collect",
       "stay": "",
       "exit": ""
     },
     {
-      "self": "PLAYER",
-      "other": "SPRING",
+      "self": "OBJ_PLAYERSTART",
+      "other": "OBJ_BOUNCER",
       "enter": "bounce",
       "stay": "",
       "exit": ""
@@ -29,20 +29,157 @@
         ]
       },
       {
+        "op": "call",
+        "fn": {
+          "t": "ref",
+          "name": "std_sfx_play",
+          "category": "Hardware"
+        },
+        "args": "gem_sfx,15,8,6"
+      },
+      {
         "op": "free",
         "target": "Entities[other]"
       }
     ],
     "bounce": [
       {
+        "op": "if",
+        "cond": [
+          {
+            "t": "ref",
+            "name": "Entities[self].bounce",
+            "category": "Fields"
+          },
+          {
+            "t": "op",
+            "op": "&&"
+          },
+          {
+            "t": "ref",
+            "name": "Entities[self].vx",
+            "category": "Fields"
+          },
+          {
+            "t": "op",
+            "op": "<"
+          },
+          {
+            "t": "val",
+            "text": "0.0"
+          }
+        ],
+        "then": [
+          {
+            "op": "return",
+            "value": "0"
+          }
+        ],
+        "else": []
+      },
+      {
+        "op": "declare",
+        "type": "f16",
+        "name": "bounce_height",
+        "value": "-BOUNCE_SPEED"
+      },
+      {
+        "op": "set",
+        "target": "Entities[self].bounce",
+        "value": [
+          {
+            "t": "val",
+            "text": "1"
+          }
+        ]
+      },
+      {
+        "op": "switch",
+        "cond": [
+          {
+            "t": "ref",
+            "name": "Entities[other].param",
+            "category": "Fields"
+          }
+        ],
+        "cases": [
+          {
+            "value": "1",
+            "body": [
+              {
+                "op": "set",
+                "target": "bounce_height",
+                "value": [
+                  {
+                    "t": "val",
+                    "text": "-BOUNCE_SPEED"
+                  },
+                  {
+                    "t": "op",
+                    "op": "/"
+                  },
+                  {
+                    "t": "val",
+                    "text": "2.0"
+                  }
+                ]
+              },
+              {
+                "op": "free",
+                "target": {
+                  "t": "ref",
+                  "name": "Entities[other]",
+                  "category": "Slots"
+                }
+              }
+            ]
+          },
+          {
+            "value": "2",
+            "body": [
+              {
+                "op": "add",
+                "target": "Entities[self].dash",
+                "value": [
+                  {
+                    "t": "val",
+                    "text": "10"
+                  }
+                ]
+              },
+              {
+                "op": "set",
+                "target": "bounce_height",
+                "value": [
+                  {
+                    "t": "val",
+                    "text": "0"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "default": null
+      },
+      {
         "op": "set",
         "target": "Entities[self].vy",
         "value": [
           {
             "t": "val",
-            "text": "-JUMP_SPEED"
+            "text": "bounce_height"
           }
         ]
+      },
+      {
+        "op": "call",
+        "fn": {
+          "t": "ref",
+          "name": "set_anim",
+          "category": "Functions"
+        },
+        "args": "other, SPRING_MS_ANIM_BOUNCE, 1"
       }
     ]
   }

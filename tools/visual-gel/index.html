@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Visual GEL Editor</title>
   <link rel="stylesheet" href="../contact-editor/editor.css">
-  <link rel="stylesheet" href="editor.css?v=affected-functions-1">
-  <script defer src="model.js?v=define-values-1"></script>
+  <link rel="stylesheet" href="editor.css?v=clip-2">
+  <script defer src="model.js?v=clip-2"></script>
   <script defer src="history.js"></script>
-  <script defer src="editor.js?v=define-values-1"></script>
+  <script defer src="editor.js?v=clip-2"></script>
   <script defer src="memory-layout.js"></script>
-  <script defer src="project-editor.js?v=affected-functions-1"></script>
+  <script defer src="project-editor.js?v=clip-2"></script>
 </head>
 <body>
   <main>
@@ -67,6 +67,12 @@
     <div id="function-body"></div>
     <div id="new-statements"></div>
     <div id="closing"></div>
+    <section id="clipboard" aria-labelledby="clipboard-heading">
+      <h2 id="clipboard-heading">Clipboard</h2>
+      <p>Tick statements and choose Copy or Cut. Each copy is kept here as its own entry, also across functions and files. Paste goes before the single ticked statement, or to the end of the function if none is ticked.</p>
+      <button id="clipboard-clear" type="button" disabled>Clear clipboard</button>
+      <div id="clipboard-list"></div>
+    </section>
     </section>
   </main>
 </body>
