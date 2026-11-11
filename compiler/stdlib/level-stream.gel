@@ -1,7 +1,9 @@
 // Streams a packed level into the BG2 tilemap ring at VRAM word $4000.
-// The caller supplies cam_x/cam_y, initializes while blanked, and streams in VBlank.
+// The caller supplies world-pixel camera coordinates, initializes while blanked,
+// and streams in VBlank.
 // The camera must remain inside level_left/level_top's loaded coverage.
-// Include level-data.gel first; the level uses 8x8 tiles and a 256x224 viewport.
+// Include snes.gel, assets.gel and level-data.gel first; the level uses 8x8 tiles
+// and a 256x224 viewport. This module owns BG2's map and compiler scratch $04-$09.
 u16 level_top = 0;
 u16 level_left = 0;
 u8 level_stream_ready = 0;
@@ -68,7 +70,7 @@ fn level_load_column(u16 x) {
     }
 }
 
-fn level_want_left() {
+fn level_want_left(u16 cam_x) {
     if (!LEVEL_BANKED || LEVEL_WIDTH == 32) { return 0; }
     u16 want = cam_x >> 3;
     if (want > 16) { want -= 16; } else { want = 0; }
@@ -76,7 +78,7 @@ fn level_want_left() {
     return want;
 }
 
-fn level_want_top() {
+fn level_want_top(u16 cam_y) {
     u16 want = cam_y >> 3;
     if (want > 0) { want -= 1; }
     if (want > LEVEL_MAX_TOP) { want = LEVEL_MAX_TOP; }
@@ -105,9 +107,10 @@ fn level_stream_clamp_y(u16 y) {
 }
 
 // Fills the whole ring. Call with the screen blanked.
-fn level_stream_init() {
-    level_top = level_want_top();
-    level_left = level_want_left();
+fn level_stream_init(u16 cam_x, u16 cam_y) {
+    level_stream_ready = 0;
+    level_top = level_want_top(cam_y);
+    level_left = level_want_left(cam_x);
     u16 r = 0;
     while (r < 32) {
         level_load_row(level_top + r);
@@ -117,8 +120,8 @@ fn level_stream_init() {
 }
 
 // Call during VBlank, before setting the scroll registers.
-fn level_stream() {
-    u16 want = level_want_top();
+fn level_stream(u16 cam_x, u16 cam_y) {
+    u16 want = level_want_top(cam_y);
     u8 budget = STREAM_ROWS_PER_FRAME;
     while (level_top != want) {
         if (budget == 0) { return 0; }
@@ -136,7 +139,7 @@ fn level_stream() {
         }
     }
     if (LEVEL_BANKED) {
-        u16 left = level_want_left();
+        u16 left = level_want_left(cam_x);
         while (level_left != left) {
             if (budget == 0) { return 0; }
             u16 line = std_vcount();

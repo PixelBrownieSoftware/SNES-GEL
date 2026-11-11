@@ -84,9 +84,10 @@ build to check them. Integer defines assigned to `f16` are raw bits, not scaled 
 
 ## Visual GEL editor
 
-Open **Visual GEL editor** from the shared editor home page. Choose a project `.gel` file and
-function to inspect its real source. Assignments, declarations, expressions, returns and control
-flow headers are editable, including inside existing nested blocks. Existing control flow appears
+Open **Visual GEL editor** from the shared editor home page. Choose **Open Project** and select
+the project's `gel-project.json`, then choose a `.gel` file and function to inspect its real source.
+The editor remembers the last project in user-local settings. Assignments, declarations, expressions,
+returns and control flow headers are editable, including inside existing nested blocks. Existing control flow appears
 as nested visual blocks rather than raw braces; it stays in place so its comments, assembly and
 other source are preserved. Its conditions, loop headers
 and case values can be edited without rewriting its body. New `if`, `while`, `for_each`, `switch`
@@ -138,8 +139,19 @@ edits first. Removal is blocked when possible references are found in top-level 
 files or the contact configuration; those checks are conservative and do not cover external
 or generated build files. Generated `contact.gel` cannot be changed here. Build after changes.
 
-The **Declarations & memory** tab lists the editor's project symbols,
-including defines, globals, enums, functions and struct fields. It is read-only. Compiled
+The **Declarations & memory** tab lets you select a project-root GEL file and add or edit
+its `#define`, global variable and `struct_table` declarations. Edit the GEL declaration
+in the dialog and save it; tables use visual name, size, address, layout and field controls.
+Existing table comments and surrounding source are preserved. A changed file must be reloaded
+before saving, and pending function edits must be saved or undone first. When a declaration
+or table field is renamed, the checked **Preview and update references** option lists affected
+project-root GEL files and asks for confirmation before writing. It conservatively refuses
+ambiguous references, shadowed names, assembly and contact configuration references; update
+those manually first. Generated files, included files outside the project root and other
+external references are not rewritten. Uncheck the option to save without updating references.
+Build and check your game after changes. Generated `contact.gel` is read-only.
+The symbol overview also lists enums,
+functions, standard-library and generated symbols, and remains read-only. Compiled
 RAM and MMIO addresses, field strides and pool masks come from `build/build_output.asm`;
 they are not live values or ROM locations and can be stale, including after a failed build.
 Rebuild and refresh the panel to update them.
@@ -174,13 +186,17 @@ generate a standalone block list. The shared server's `POST /api/validate-gel` a
 
 ## Local editors
 
-Run `tools/editor/start.bat` on Windows, or `python tools/editor/server.py` on any platform,
-then open `http://127.0.0.1:8765/`. One loopback-only server hosts the object, contact and
-metasprite editors for the same project. Pass a game folder as the first argument to use another
-project; `--assets-dir` overrides its assets folder. The existing editor launchers also start
-this server. Run only one server per port.
+Run `start.bat` in the GEL root on Windows, or `sh start.sh` on macOS/Linux. The launcher
+starts the server and opens the editor in your browser; keep its terminal open while editing.
+If the browser does not open, visit `http://127.0.0.1:8765/`. You can still run
+`tools/editor/start.bat` or start `python tools/editor/server.py` directly. One loopback-only server hosts the object, contact, metasprite
+and Visual GEL editors for the selected project. Visual GEL's **Open Project** action selects a
+project's `gel-project.json`; the other editors use that same project and its `assets/` folder.
+The last selected project is remembered in user-local settings. Pass a game folder as the first
+argument to start with another project; `--assets-dir` overrides its assets folder. The existing
+editor launchers also start this server. Run only one server per port.
 
-The **Level editor** opens the project's `assets/level*.tmj` maps. Drag over the first
+The **Level editor** opens the selected project's `assets/level*.tmj` maps. Drag over the first
 tileset to select a rectangular stamp, or use Rectangle select to copy tiles from the active map
 layer; paint places the stamp, including empty cells, and erase clears tiles. Select and drag an
 object's hitbox to move it, or edit its Tiled position and `param` (variant). Hitbox dimensions
@@ -192,7 +208,6 @@ Save writes the original Tiled map and rejects changes if it changed on disk. Th
 does not create maps, layers or objects, edit tileset properties, or support infinite maps; use
 Tiled for those tasks. Metasprite previews use the first clip's first frame and do not simulate
 animation or runtime palette changes.
-
 
 The object editor saves `objects.json`: each definition matches a Tiled object class (or its
 fallback name) case-insensitively. Use letters, digits and underscores; the build assigns numeric
@@ -237,8 +252,9 @@ itself. Optional metasprite and palette IDs are stored as `OBJECT_VALUE_METASPRI
 `OBJECT_VALUE_PALETTE_ID`; they do not change rendering. Definitions for classes absent from
 built levels remain in the editor but are not emitted into runtime data until the class is used.
 
-The sample's `game/level-data.gel` reads packed object records and collision/slope data.
-Spawning, collision responses and tile streaming remain in the game systems that consume it.
+The optional stdlib `level-data.gel` reads packed object records and collision/slope data;
+`level-collision.gel` provides solid and slope probes, and `level-stream.gel` streams maps.
+Spawning, collision responses and camera following remain in the game systems that consume them.
 
 ## Quick start
 

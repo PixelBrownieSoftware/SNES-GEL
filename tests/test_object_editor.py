@@ -240,11 +240,81 @@ def test_shared_server_routes_and_object_roundtrip(tmp_path):
         thread.join()
 
 
+def test_visual_gel_opens_and_remembers_project(tmp_path, monkeypatch):
+    current = tmp_path / "current"
+    target = tmp_path / "another game"
+    current.mkdir()
+    target.mkdir()
+    (current / "game.gel").write_text("fn current() {}\n", encoding="utf-8")
+    (target / "game.gel").write_text("fn target() {}\n", encoding="utf-8")
+    marker = target / server.PROJECT_FILE
+    marker.write_text(json.dumps({"format": "snes-gel-project", "version": 1, "name": "Target"}),
+                      encoding="utf-8")
+    monkeypatch.setenv("GEL_EDITOR_CONFIG_DIR", str(tmp_path / "user-settings"))
+    monkeypatch.setattr(server, "choose_project_file", lambda initial_dir: str(marker))
+
+    editor = server.EditorServer(("127.0.0.1", 0), current)
+    thread = threading.Thread(target=editor.serve_forever)
+    thread.start()
+    base = f"http://127.0.0.1:{editor.server_address[1]}"
+
+    def get(path):
+        with urlopen(base + path) as response:
+            return json.loads(response.read())
+
+    def post(path):
+        request = Request(base + path, data=b"{}", headers={"Content-Type": "application/json"},
+                          method="POST")
+        with urlopen(request) as response:
+            return json.loads(response.read())
+
+    try:
+        assert get("/api/project")["path"] == str(current.resolve())
+        opened = post("/api/project/open")
+        assert opened["name"] == "Target"
+        assert opened["path"] == str(target.resolve())
+        assert opened["has_marker"] is True
+        assert get("/api/gel-files")["files"] == ["game.gel"]
+        assert editor.assets_dir == target / "assets"
+        cache = tmp_path / "user-settings" / "last-project.json"
+        assert json.loads(cache.read_text(encoding="utf-8"))["last_project"] == str(marker.resolve())
+        assert server.read_last_project() == str(marker.resolve())
+
+        monkeypatch.setattr(server, "choose_project_file", lambda initial_dir: str(current / "bad.json"))
+        with pytest.raises(HTTPError) as error:
+            post("/api/project/open")
+        assert error.value.code == 400
+        assert get("/api/project")["path"] == str(target.resolve())
+    finally:
+        editor.shutdown()
+        editor.server_close()
+        thread.join()
+
+
 @pytest.mark.parametrize("editor", ["contact-editor", "metasprite-editor"])
 def test_legacy_server_entrypoints_launch_shared_server(editor):
     result = subprocess.run([sys.executable, str(ROOT / "tools" / editor / "server.py"), "--help"],
                             check=True, capture_output=True, text=True)
     assert "Local server for the GEL editors" in result.stdout
+
+
+@pytest.mark.parametrize("browser_result", [True, False])
+def test_server_opens_browser_at_bound_port(tmp_path, monkeypatch, capsys, browser_result):
+    seen = []
+    monkeypatch.setattr(sys, "argv", ["server.py", str(tmp_path), "--port", "0", "--open-browser"])
+    monkeypatch.setattr(server.webbrowser, "open", lambda url: seen.append(url) or browser_result)
+    monkeypatch.setattr(server.EditorServer, "serve_forever", lambda self: None)
+    server.main()
+
+    output = capsys.readouterr()
+    assert len(seen) == 1
+    assert seen[0].startswith("http://127.0.0.1:")
+    assert not seen[0].endswith(":0/")
+    assert f"GEL editors: {seen[0]}" in output.out
+    if browser_result:
+        assert not output.err
+    else:
+        assert f"Open {seen[0]} manually." in output.err
 
 
 def test_signature_preview_confirm_and_stale_project(tmp_path):

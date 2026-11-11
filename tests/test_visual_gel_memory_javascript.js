@@ -72,3 +72,31 @@ test("occupancy handles overlapping categories, aliases and ranges outside low W
     assert.deepEqual(result.counts, { ram: 1, field: 0, mask: 0, overlap: 3, unreported: 8188 });
     assert.equal(result.outside, true);
 });
+
+test("address overview respects strided fields, reserved ranges, widths, and low WRAM boundaries", () => {
+    const report = {
+        available: true,
+        variables: [{ name: "v", type: "u16", kind: "ram", address: 0x20 },
+                    { name: "reg", type: "u8", kind: "mmio", address: 0x30 }],
+        tables: [{ name: "T", size: 2, mask: 0x40,
+            fields: [{ name: "x", type: "u8", address: 0x100, stride: 3 }] }],
+        reserved: [{ name: "scratch", start: 0, end: 15 }, { name: "stack", start: 0x1f00, end: 0x1fff }]
+    };
+    const ranges = layout.addressRanges(report);
+    assert.deepEqual(ranges.slice(0, 3), [
+        { start: 0, end: 15, category: "reserved" },
+        { start: 16, end: 31, category: "unreported" },
+        { start: 32, end: 33, category: "occupied" }
+    ]);
+    assert.equal(layout.addressStatus(ranges, 0x1f, 2), "occupied");
+    assert.equal(layout.addressStatus(ranges, 0x1f, 1), "unreported");
+    assert.equal(layout.addressStatus(ranges, 0x101, 2), "unreported");
+    assert.equal(layout.addressStatus(ranges, 0x102, 2), "occupied");
+    assert.equal(layout.addressStatus(ranges, 0x30, 1), "unreported");
+    assert.equal(layout.addressStatus(ranges, 0x1eff, 2), "reserved");
+    assert.equal(layout.addressStatus(ranges, 0x1fff, 2), "outside");
+    assert.equal(layout.typeSize("f16"), 2);
+    assert.throws(() => layout.addressRanges({ available: false }), /No compiled/);
+    assert.throws(() => layout.addressStatus(ranges, -1, 1), /Invalid/);
+    assert.throws(() => layout.typeSize("f32"), /Unknown/);
+});

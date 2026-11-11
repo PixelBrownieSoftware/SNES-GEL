@@ -16,6 +16,7 @@ async function setup(data, fields) {
         insertCell() { const cell = new Element("td"); this.append(cell); return cell; }
         setAttribute() {}
         addEventListener(event, callback) { this.listeners[event] = callback; }
+        getContext() { return { clearRect() {} }; }
         get options() { return this.children; }
     }
     const nodes = Object.fromEntries(["objects", "status", "save", "add"].map(id => [id, new Element(id)]));

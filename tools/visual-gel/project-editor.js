@@ -2,6 +2,8 @@
     "use strict";
     const file = document.getElementById("file");
     const functionSelect = document.getElementById("function");
+    const openProjectButton = document.getElementById("open-project");
+    const projectName = document.getElementById("project-name");
     const addFunction = document.getElementById("add-function");
     const removeFunction = document.getElementById("remove-function");
     const body = document.getElementById("function-body");
@@ -24,6 +26,25 @@
     const { el, renderBlocks, addBar } = visual;
     let documentData = null, symbols = null, memory = null, selected = -1;
     let blocks = [], additions = [], commentEdits = {}, activeLocals = [], activeLocalTypes = {}, initial = "", history = null, restoring = false;
+    const declarationFile = document.getElementById("declaration-file");
+    const declarationList = document.getElementById("declaration-list");
+    const declarationStatus = document.getElementById("declaration-status");
+    const declarationDialog = document.getElementById("declaration-dialog");
+    const declarationError = document.getElementById("declaration-error");
+    const tableControls = document.getElementById("table-controls");
+    const defineControls = document.getElementById("define-controls");
+    const defineName = document.getElementById("define-name");
+    const defineValue = document.getElementById("define-value");
+    const globalControls = document.getElementById("global-controls");
+    const globalType = document.getElementById("global-type");
+    const globalName = document.getElementById("global-name");
+    const globalValue = document.getElementById("global-value");
+    const globalStorage = document.getElementById("global-storage");
+    const globalAddress = document.getElementById("global-address");
+    const globalMemory = document.getElementById("global-memory");
+    const globalAddressStatus = document.getElementById("global-address-status");
+    const globalMemoryRanges = document.getElementById("global-memory-ranges");
+    let declarationData = null, declarationEdit = null, declarationLoad = 0, tableModel = null, defineModel = null, globalModel = null;
 
     const tabs = [document.getElementById("code-tab"), document.getElementById("declarations-tab")];
     function selectTab(tab) {
@@ -47,10 +68,502 @@
 
     async function request(url, options) {
         const response = await fetch(url, options);
+        if (!(response.headers.get("content-type") || "").includes("application/json"))
+            throw new Error(`The editor server returned an unexpected response (HTTP ${response.status}). Stop and restart the GEL editor server, then reload this page.`);
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
         return data;
     }
+
+    function renderDeclarations() {
+        declarationList.replaceChildren();
+        const readonly = !declarationData || declarationData.name === "contact.gel";
+        for (const kind of ["define", "global", "table"])
+            document.getElementById(`add-${kind}`).disabled = readonly;
+        if (!declarationData) return;
+        if (readonly) declarationStatus.textContent = "Generated contact.gel is read-only.";
+        if (!declarationData.declarations.length) {
+            declarationList.append(el("p", "", "No editable declarations found in this file."));
+            return;
+        }
+        declarationData.declarations.forEach((entry, index) => {
+            const row = el("div", "declaration-row");
+            let globalTypeName = "";
+            if (entry.kind === "global") {
+                try { globalTypeName = VisualGelGlobalEditor.create(entry.code).type; }
+                catch (error) { declarationStatus.textContent = `Cannot colour ${entry.name}: ${error.message}`; }
+            }
+            const title = el("strong", entry.kind === "define" ? "t-define" : entry.kind === "table" ? "t-table" :
+                globalTypeName ? `t-${globalTypeName}` : "",
+                `${entry.kind}: ${entry.name}`);
+            const code = el("code");
+            visual.highlight(entry.code, code);
+            if (globalTypeName) {
+                for (const token of code.children)
+                    if (token.textContent === entry.name)
+                        token.className = `t-${globalTypeName}`;
+            }
+            row.append(title, code);
+            const button = el("button", "", "Edit");
+            button.type = "button";
+            button.disabled = readonly;
+            button.setAttribute("aria-label", `Edit ${entry.kind} ${entry.name}`);
+            button.addEventListener("click", () => editDeclaration(entry.kind, index));
+            row.append(button);
+            if (entry.kind === "global" || entry.kind === "define")
+                row.append(usageButton(entry.kind, entry.name), removalButton(entry.kind, entry.name, index));
+            if (entry.kind === "table") {
+                try {
+                    for (const field of VisualGelTableEditor.create(entry.code).fields)
+                        row.append(usageButton("field", field.name, entry.name));
+                } catch (error) {
+                    declarationStatus.textContent = `Cannot list fields of ${entry.name}: ${error.message}`;
+                }
+            }
+            declarationList.append(row);
+        });
+    }
+
+    async function loadDeclarations(name) {
+        const load = ++declarationLoad;
+        declarationData = null;
+        renderDeclarations();
+        if (!name) return;
+        declarationStatus.textContent = "Loading declarations...";
+        const data = await request(`/api/gel-declarations/${encodeURIComponent(name)}`, { cache: "no-store" });
+        if (load !== declarationLoad) return;
+        declarationData = data;
+        declarationStatus.textContent = "";
+        renderDeclarations();
+    }
+
+    function editDeclaration(kind, index = null) {
+        if (!declarationData || declarationData.name === "contact.gel") return;
+        declarationEdit = { kind, index };
+        const templates = {
+            define: "#define NAME 1",
+            global: "u8 name = 0;",
+            table: "struct_table Name[16] {\n    u8 field;\n}"
+        };
+        const code = index === null ? templates[kind] : declarationData.declarations[index].code;
+        tableModel = null;
+        defineModel = null;
+        globalModel = null;
+        if (kind === "define") {
+            try { defineModel = VisualGelDefineEditor.create(code); }
+            catch (error) {
+                declarationStatus.textContent = error.message;
+                return;
+            }
+            defineName.value = defineModel.name;
+            defineValue.value = defineModel.value;
+        }
+        if (kind === "global") {
+            try { globalModel = VisualGelGlobalEditor.create(code); }
+            catch (error) {
+                declarationStatus.textContent = error.message;
+                return;
+            }
+            globalType.value = globalModel.type;
+            globalName.value = globalModel.name;
+            globalValue.value = globalModel.value;
+            globalStorage.value = globalModel.storage;
+            globalAddress.value = globalModel.address;
+            colorGlobal();
+        }
+        if (kind === "table") {
+            try { tableModel = VisualGelTableEditor.create(code); }
+            catch (error) {
+                declarationStatus.textContent = error.message;
+                return;
+            }
+            renderTableEditor();
+        }
+        tableControls.hidden = kind !== "table";
+        defineControls.hidden = kind !== "define";
+        globalControls.hidden = kind !== "global";
+        document.getElementById("global-storage-hint").hidden = kind !== "global";
+        globalMemory.hidden = kind !== "global";
+        if (kind === "global") renderGlobalMemory();
+        declarationError.textContent = "";
+        document.getElementById("declaration-dialog-title").textContent =
+            `${index === null ? "Add" : "Edit"} ${kind === "table" ? "struct table" : kind}`;
+        declarationDialog.showModal();
+        (kind === "table" ? tableControls.querySelector("input") : kind === "define" ? defineValue : globalName).focus();
+    }
+
+    function colorGlobal() {
+        globalType.className = globalName.className = `t-${globalType.value}`;
+    }
+    globalType.addEventListener("change", colorGlobal);
+
+    function usageButton(kind, name, table = null) {
+        const label = table ? `${table}.${name}` : name;
+        const button = el("button", "ghost", "Find uses"); button.type = "button";
+        button.setAttribute("aria-label", `Find uses of ${label}`);
+        button.addEventListener("click", () => showUsages(kind, name, table));
+        return button;
+    }
+
+    function removalButton(kind, name, index, table = null) {
+        const label = table ? `${table}.${name}` : name;
+        const button = el("button", "ghost", "Remove"); button.type = "button";
+        button.disabled = kind === "local" ? documentData && documentData.name === "contact.gel"
+            : declarationData && declarationData.name === "contact.gel";
+        button.setAttribute("aria-label", `Remove ${label}`);
+        button.addEventListener("click", () => removeVariable(kind, name, index, table));
+        return button;
+    }
+
+    async function removeVariable(kind, name, index, table = null) {
+        if (dirty()) {
+            declarationStatus.textContent = symbolStatus.textContent = "Save or undo pending function edits before removing variables.";
+            return;
+        }
+        const label = table ? `${table}.${name}` : name;
+        const payload = kind === "local"
+            ? { kind, symbol: name, name: documentData.name, hash: documentData.hash, function: selected }
+            : { kind, symbol: name, table, index, name: declarationData.name, hash: declarationData.hash };
+        const options = data => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+        let applied = false;
+        try {
+            const preview = await request("/api/gel-variable-removal", options(payload));
+            const accepted = await confirmDeclarationPreview({ ...preview, type_changes: [], references: [],
+                removal: label });
+            if (!accepted) return;
+            await request("/api/gel-variable-removal", options({ ...payload, token: preview.token, apply: true }));
+            applied = true;
+            if (declarationDialog.open) declarationDialog.close();
+            if (declarationData) await loadDeclarations(declarationData.name);
+            if (documentData && preview.files.includes(documentData.name)) {
+                const oldIndex = selected;
+                await openFile(documentData.name);
+                if (oldIndex >= 0) { selectFunction(oldIndex); functionSelect.value = String(oldIndex); }
+            }
+            await refreshSymbols();
+            declarationStatus.textContent = symbolStatus.textContent = `Removed ${label}. Build and review the game.`;
+        } catch (error) {
+            const message = applied ? `Removed ${label}, but refresh failed: ${error.message}`
+                : `Could not remove ${label}: ${error.message}`;
+            declarationStatus.textContent = symbolStatus.textContent = message;
+            if (declarationDialog.open) declarationError.textContent = message;
+        }
+    }
+
+    async function showUsages(kind, name, table = null) {
+        if (dirty()) {
+            const message = "Save or undo pending function edits before searching saved source.";
+            status.textContent = message;
+            symbolStatus.textContent = message;
+            declarationStatus.textContent = message;
+            return;
+        }
+        const dialog = el("dialog", "parameter-editor declaration-preview");
+        const label = table ? `${table}.${name}` : name;
+        dialog.setAttribute("aria-label", `Uses of ${label}`);
+        dialog.append(el("h3", "", `Uses of ${label}`));
+        const message = el("p", "", "Searching saved project source...");
+        message.setAttribute("role", "status");
+        const results = el("ol", "usage-results");
+        const close = el("button", "ghost", "Close"); close.type = "button";
+        close.addEventListener("click", () => dialog.close());
+        dialog.append(message, results, close);
+        dialog.addEventListener("close", () => dialog.remove());
+        document.body.append(dialog);
+        dialog.showModal();
+        const query = { kind, symbol: name, table };
+        if (kind === "local") Object.assign(query, { file: documentData.name, hash: documentData.hash, function: selected });
+        try {
+            const response = await request("/api/gel-usages", {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(query)
+            });
+            if (!dialog.open) return;
+            message.textContent = `${response.results.length} possible matches in saved ${response.scope} source. ${response.warning}`;
+            for (const result of response.results) {
+                const item = el("li");
+                item.append(el("strong", "", `${result.file}:${result.line}:${result.column}${result.functionName ? ` · ${result.functionName}` : ""}`),
+                    el("code", "", result.text));
+                if (result.function !== null) {
+                    const jump = el("button", "ghost", result.part === null ? "Open function" : "Jump to block");
+                    jump.type = "button";
+                    jump.addEventListener("click", async () => {
+                        if (!mayDiscard()) return;
+                        jump.disabled = true;
+                        try {
+                            await openFile(result.file, result.hash);
+                            file.value = result.file;
+                            selectFunction(result.function);
+                            functionSelect.value = String(result.function);
+                            selectTab(tabs[0]);
+                            dialog.close();
+                            const target = result.part === null ? body.querySelector(".function-signature") :
+                                body.querySelector(`[data-source-part="${result.part}"]`);
+                            if (target) {
+                                target.classList.add("usage-target");
+                                target.scrollIntoView({ block: "center", behavior: "smooth" });
+                                setTimeout(() => target.classList.remove("usage-target"), 4000);
+                            }
+                            status.textContent = result.part === null
+                                ? `${result.file}:${result.line} opened in function ${result.functionName}; this use is not in an editable block.`
+                                : `${result.file}:${result.line} opened.`;
+                        } catch (error) {
+                            message.textContent = `Could not jump: ${error.message}`;
+                            jump.disabled = false;
+                        }
+                    });
+                    item.append(jump);
+                }
+                results.append(item);
+            }
+        } catch (error) {
+            message.textContent = `Could not find uses: ${error.message}`;
+        }
+    }
+
+    function renderGlobalMemory() {
+        globalMemoryRanges.replaceChildren();
+        if (!globalModel) return;
+        if (globalStorage.value === "persist") {
+            globalAddressStatus.textContent = "Persist addresses are assigned by the compiler; fixed addresses are not supported.";
+            return;
+        }
+        if (globalStorage.value === "mmio") {
+            globalAddressStatus.textContent = "MMIO addresses select hardware registers, not free WRAM. Consult the hardware register map.";
+            return;
+        }
+        if (!memory || !memory.available) {
+            globalAddressStatus.textContent = "No compiled layout available. Build the game, then refresh declarations and layout.";
+            return;
+        }
+        let width, ranges;
+        try {
+            width = VisualGelMemoryLayout.typeSize(globalType.value);
+            ranges = VisualGelMemoryLayout.addressRanges(memory);
+        } catch (error) {
+            globalAddressStatus.textContent = `Cannot display the memory layout: ${error.message}`;
+            return;
+        }
+        const format = address => `$${address.toString(16).toUpperCase().padStart(4, "0")}`;
+        const value = globalAddress.value.trim();
+        if (!value) {
+            globalAddressStatus.textContent = `No fixed address selected. The compiler allocates ${width} byte${width === 1 ? "" : "s"} automatically.`;
+        } else if (!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(value)) {
+            globalAddressStatus.textContent = "This address is a macro or invalid number; its occupancy cannot be checked here.";
+        } else {
+            const address = Number(value);
+            if (!Number.isSafeInteger(address)) {
+                globalAddressStatus.textContent = "Address is too large to check.";
+            } else {
+                const state = VisualGelMemoryLayout.addressStatus(ranges, address, width);
+                globalAddressStatus.textContent = state === "outside"
+                    ? "This address range lies outside the reported low WRAM window ($0000–$1FFF)."
+                    : state === "reserved"
+                        ? "This address overlaps a known scratch, sound-driver or stack reservation."
+                    : state === "occupied"
+                        ? "This address overlaps a compiler-reported allocation. The current variable, if already built, is included."
+                        : "No compiler-reported allocation overlaps this address, but it is not guaranteed free.";
+            }
+        }
+        function addRanges(category) {
+            const list = ranges.filter(range => range.category === category &&
+                (category !== "unreported" || range.end - range.start + 1 >= width));
+            const group = el("details");
+            const title = { unreported: "Unreported (not guaranteed free)", occupied: "Reported occupied", reserved: "Known reserved" }[category];
+            group.append(el("summary", "", `${title} ranges: ${list.length}`));
+            if (!list.length) group.append(el("p", "", category !== "unreported" ? "None reported." : `No unreported range fits ${width} bytes.`));
+            else {
+                const items = el("ul", "address-range-list");
+                for (const range of list) {
+                    const item = el("li", "", `${format(range.start)}–${format(range.end)} (${range.end - range.start + 1} bytes)`);
+                    if (category === "unreported") {
+                        const use = el("button", "ghost", "Use start"); use.type = "button";
+                        use.setAttribute("aria-label", `Use unreported address ${format(range.start)}`);
+                        use.addEventListener("click", () => {
+                            globalAddress.value = `0x${range.start.toString(16).toUpperCase().padStart(4, "0")}`;
+                            renderGlobalMemory();
+                            globalAddress.focus();
+                        });
+                        item.append(use);
+                    }
+                    items.append(item);
+                }
+                group.append(items);
+            }
+            globalMemoryRanges.append(group);
+        }
+        addRanges("unreported");
+        addRanges("occupied");
+        addRanges("reserved");
+    }
+    globalType.addEventListener("change", renderGlobalMemory);
+    globalStorage.addEventListener("change", renderGlobalMemory);
+    globalAddress.addEventListener("input", renderGlobalMemory);
+
+    function confirmDeclarationPreview(preview) {
+        return new Promise(resolve => {
+            const dialog = el("dialog", "parameter-editor declaration-preview");
+            dialog.setAttribute("aria-label", "Confirm declaration changes");
+            dialog.append(el("h3", "", "Review and confirm declaration changes"));
+            if (preview.removal) dialog.append(el("p", "", `Remove ${preview.removal}? Reads will become 0; write statements will be removed, including their side effects. Review every change and build the game.`));
+            const types = preview.type_changes.map(item => `${item.name}: ${item.before} → ${item.after}`);
+            if (types.length) dialog.append(el("p", "", `Type changes: ${types.join(", ")}`));
+            dialog.append(el("p", "", "Files to modify: " + preview.files.join(", ")));
+            for (const [name, lines] of Object.entries(preview.diffs)) {
+                const details = el("details");
+                details.open = true;
+                details.append(el("summary", "", name), el("pre", "", lines.join("\n")));
+                dialog.append(details);
+            }
+            if (!preview.removal) dialog.append(el("h4", "", "Possible references to review"),
+                el("p", "", "These are possible matches, not a complete semantic analysis. Type changes do not rewrite uses; check them and build the game. Generated, included and external files may need manual changes."));
+            if (!preview.removal && preview.references.length) {
+                const list = el("ul");
+                for (const reference of preview.references)
+                    list.append(el("li", "", `${reference.file}:${reference.line}: ${reference.text}`));
+                dialog.append(list);
+            } else if (!preview.removal) dialog.append(el("p", "", "No matching references found in project-root GEL files or contact configuration."));
+            const confirm = el("button", "", "Confirm and save"); confirm.type = "button";
+            const cancel = el("button", "ghost", "Cancel"); cancel.type = "button";
+            confirm.addEventListener("click", () => dialog.close("confirm"));
+            cancel.addEventListener("click", () => dialog.close("cancel"));
+            dialog.append(confirm, cancel);
+            dialog.addEventListener("close", () => {
+                const accepted = dialog.returnValue === "confirm";
+                dialog.remove();
+                resolve(accepted);
+            });
+            document.body.append(dialog);
+            dialog.showModal();
+            cancel.focus();
+        });
+    }
+
+    function renderTableEditor() {
+        tableControls.replaceChildren();
+        const header = el("div", "table-controls");
+        function input(label, value, css, update) {
+            const wrapper = el("label", "", label);
+            const control = el("input", css);
+            control.value = value;
+            control.addEventListener("input", () => update(control.value));
+            wrapper.append(control);
+            header.append(wrapper);
+        }
+        input("Table name", tableModel.name, "t-table", value => { tableModel.name = value; });
+        input("Slots", tableModel.size, "", value => { tableModel.size = value; });
+        input("Address (optional)", tableModel.address, "", value => { tableModel.address = value; });
+        const interleavedLabel = el("label", "", "Interleaved");
+        const interleaved = el("input"); interleaved.type = "checkbox"; interleaved.checked = tableModel.interleaved;
+        interleaved.addEventListener("change", () => { tableModel.interleaved = interleaved.checked; });
+        interleavedLabel.append(interleaved); header.append(interleavedLabel);
+        tableControls.append(header, el("h4", "", "Fields"));
+        const fields = el("div", "table-fields");
+        tableModel.fields.forEach((field, index) => {
+            const row = el("div", "table-controls block");
+            const typeLabel = el("label", "", "Type");
+            const type = el("select");
+            for (const value of ["u8", "i8", "u16", "i16", "f16", "f32"]) {
+                const option = el("option", `t-${value}`, value); option.value = value; type.append(option);
+            }
+            type.value = field.type;
+            const nameLabel = el("label", "", "Field name");
+            const name = el("input"); name.value = field.name;
+            const color = () => { type.className = name.className = `t-${field.type}`; };
+            color();
+            type.addEventListener("change", () => { field.type = type.value; color(); });
+            name.addEventListener("input", () => { field.name = name.value; });
+            typeLabel.append(type); nameLabel.append(name);
+            const remove = el("button", "ghost", "Remove"); remove.type = "button";
+            remove.setAttribute("aria-label", `Remove field ${field.name || index + 1}`);
+            remove.addEventListener("click", () => {
+                if (field.origin === null) { tableModel.fields.splice(index, 1); renderTableEditor(); return; }
+                if (VisualGelTableEditor.emit(tableModel) !== tableModel.code) {
+                    declarationError.textContent = "Save or undo table edits before removing an existing field.";
+                    return;
+                }
+                removeVariable("field", field.name, declarationEdit.index, tableModel.originalName);
+            });
+            row.append(typeLabel, nameLabel, remove); fields.append(row);
+        });
+        const add = el("button", "ghost", "+ Field"); add.type = "button";
+        add.addEventListener("click", () => {
+            tableModel.fields.push({ type: "u8", name: "", origin: null });
+            renderTableEditor();
+        });
+        tableControls.append(fields, add);
+    }
+
+    for (const kind of ["define", "global", "table"])
+        document.getElementById(`add-${kind}`).addEventListener("click", () => editDeclaration(kind));
+    document.getElementById("declaration-cancel").addEventListener("click", () => declarationDialog.close());
+    declarationFile.addEventListener("change", async () => {
+        try { await loadDeclarations(declarationFile.value); }
+        catch (error) { declarationStatus.textContent = `Could not load declarations: ${error.message}`; }
+    });
+    document.getElementById("declaration-reload").addEventListener("click", async () => {
+        try { await loadDeclarations(declarationFile.value); }
+        catch (error) { declarationStatus.textContent = `Could not load declarations: ${error.message}`; }
+    });
+    document.getElementById("declaration-form").addEventListener("submit", async event => {
+        event.preventDefault();
+        if (dirty()) {
+            declarationError.textContent = "Save or undo pending function edits before changing declarations.";
+            return;
+        }
+        const form = event.currentTarget;
+        form.inert = true;
+        try {
+            if (defineModel) { defineModel.name = defineName.value; defineModel.value = defineValue.value; }
+            if (globalModel) {
+                globalModel.type = globalType.value;
+                globalModel.name = globalName.value;
+                globalModel.value = globalValue.value;
+                globalModel.storage = globalStorage.value;
+                globalModel.address = globalAddress.value;
+            }
+            const code = tableModel ? VisualGelTableEditor.emit(tableModel)
+                : defineModel ? VisualGelDefineEditor.emit(defineModel) : VisualGelGlobalEditor.emit(globalModel);
+            const entry = declarationEdit.index === null ? null : declarationData.declarations[declarationEdit.index];
+            const newName = tableModel ? tableModel.name : defineModel ? defineModel.name : globalModel.name;
+            const fieldRenames = tableModel ? tableModel.fields.filter(field => field.origin !== null &&
+                field.name !== tableModel.originalFields[field.origin].name).map(field => ({ origin: field.origin, name: field.name })) : [];
+            const fieldOrigins = tableModel ? tableModel.fields.filter(field => field.origin !== null)
+                .map(field => ({ origin: field.origin, name: field.name })) : [];
+            const fieldTypeChanged = tableModel && tableModel.fields.some(field => field.origin !== null &&
+                field.type !== tableModel.originalFields[field.origin].type);
+            const globalTypeChanged = globalModel && globalModel.type !== globalModel.originalType;
+            const payload = { ...declarationEdit, name: declarationData.name,
+                hash: declarationData.hash, code, fieldRenames, fieldOrigins };
+            const options = data => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+            let changedFiles = [declarationData.name];
+            if (entry && (entry.name !== newName || fieldRenames.length || fieldTypeChanged || globalTypeChanged)) {
+                const preview = await request("/api/gel-declaration-rename", options(payload));
+                if (!await confirmDeclarationPreview(preview)) return;
+                await request("/api/gel-declaration-rename", options({ ...payload, apply: true, token: preview.token }));
+                changedFiles = preview.files;
+                await loadDeclarations(declarationData.name);
+            } else {
+                declarationData = await request("/api/gel-declarations", options(payload));
+            }
+            declarationDialog.close();
+            declarationStatus.textContent = "Saved. Build the game to check references, types and layout.";
+            renderDeclarations();
+            if (documentData && changedFiles.includes(documentData.name)) {
+                const index = selected;
+                await openFile(documentData.name);
+                if (index >= 0) {
+                    selectFunction(index);
+                    functionSelect.value = String(index);
+                }
+            }
+            await refreshSymbols();
+        } catch (error) {
+            if (declarationDialog.open) declarationError.textContent = `Could not save: ${error.message}`;
+            else declarationStatus.textContent = `Declaration saved, but refresh failed: ${error.message}`;
+        } finally {
+            form.inert = false;
+        }
+    });
 
     function renderMemory() {
         memoryList.replaceChildren();
@@ -146,12 +659,21 @@
                 if (typeof row === "string") {
                     const code = el("code"); visual.highlight(row, code); card.append(code);
                 }
+                else if (row.globalType) {
+                    const code = el("code");
+                    code.append(el("span", `t-${row.globalType}`, row.globalType), document.createTextNode(" "),
+                        el("span", symbols.defines.includes(row.name) ? "t-define" : `t-${row.globalType}`, row.name));
+                    card.append(code);
+                }
+                else if (row.usageKind) {
+                    const code = el("code"); visual.highlight(row.text, code); card.append(code);
+                }
                 else {
-                    card.append(el("strong", "", row.name), el("span", "symbol-detail", row.detail));
+                    card.append(el("strong", "t-table", row.name), el("span", "symbol-detail", row.detail));
                     if (row.fields && row.fields.length) {
                         const table = el("table", "symbol-fields");
                         const header = el("tr");
-                        for (const label of ["Field", "Type", "Compiled address", "Stride"]) header.append(el("th", "", label));
+                        for (const label of ["Field", "Type", "Compiled address", "Stride", "Uses"]) header.append(el("th", "", label));
                         const thead = el("thead"); thead.append(header); table.append(thead);
                         const tbody = el("tbody");
                         for (const field of row.fields) {
@@ -159,22 +681,32 @@
                             for (const cell of field) {
                                 const td = el("td"); visual.highlight(cell, td); tr.append(td);
                             }
+                            const actions = el("td");
+                            actions.append(usageButton("field", field[0], row.name));
+                            tr.append(actions);
                             tbody.append(tr);
                         }
                         table.append(tbody); card.append(table);
                     }
                 }
+                if (row.usageKind) {
+                    card.append(usageButton(row.usageKind, row.name));
+                    if (row.usageKind === "local") card.append(removalButton("local", row.name));
+                }
+                else if (row.globalType) card.append(usageButton("global", row.name));
                 list.append(card);
             }
             group.append(list);
             symbolList.append(group);
         }
         section("Defines (text substitutions; not memory allocations)",
-            symbols.defines.filter(matches).map(name => `${name} = ${symbols.defineValues[name] || "(no value)"}`));
+            symbols.defines.filter(matches).map(name => ({ name, usageKind: "define",
+                text: `${name} = ${symbols.defineValues[name] || "(no value)"}` })));
         section("Declared globals",
             Object.entries(symbols.globals).filter(([name]) => matches(name))
-                .map(([name, type]) => `${type} ${name}`));
-        if (selected >= 0) section("Locals and parameters in selected function", activeLocals.filter(matches));
+                .map(([name, type]) => ({ name, globalType: type })));
+        if (selected >= 0) section("Locals and parameters in selected function",
+            activeLocals.filter(matches).map(name => ({ name, usageKind: "local", text: name })));
         section("Enums", Object.entries(symbols.enums).flatMap(([name, values]) =>
             matches(name) ? [`${name}: ${values.join(", ")}`] :
                 values.filter(matches).map(value => `${name}: ${value}`)));
@@ -202,6 +734,9 @@
 
     async function refreshSymbols() {
         symbolStatus.textContent = "Loading declarations and memory layout…";
+        symbols = null;
+        memory = null;
+        memoryEntries = [];
         try {
             symbols = await request("/api/symbols", { cache: "no-store" });
             try {
@@ -217,11 +752,13 @@
                 memoryEntries = [];
                 symbolStatus.textContent = `Could not load memory layout: ${error.message}`;
             }
-            if (selected >= 0) visual.setIndex(visual.buildIndex(symbols));
+            visual.setIndex(visual.buildIndex(symbols));
             renderSymbols();
             renderMemory();
+            if (declarationDialog.open && globalModel) renderGlobalMemory();
         } catch (error) {
             symbolStatus.textContent = `Could not load declarations and memory layout: ${error.message}`;
+            if (declarationDialog.open && globalModel) renderGlobalMemory();
         }
     }
     symbolFilter.addEventListener("input", () => { renderSymbols(); renderMemory(); });
@@ -236,6 +773,59 @@
         renderMemory();
     });
     document.getElementById("refresh-symbols").addEventListener("click", refreshSymbols);
+
+    async function loadProjectState(project) {
+        declarationLoad++;
+        declarationData = null;
+        renderDeclarations();
+        projectName.textContent = `${project.name} — ${project.path}`;
+        projectName.title = project.path;
+        file.replaceChildren();
+        functionSelect.replaceChildren(new Option("Choose a function…", ""));
+        documentData = null;
+        selected = -1;
+        blocks = []; additions = []; history = null;
+        activeLocals = []; activeLocalTypes = {};
+        visual.resetSelection();
+        visual.setLocals(activeLocals, activeLocalTypes);
+        visual.setIndex(visual.buildIndex({}));
+        symbols = null; memory = null;
+        body.replaceChildren(); added.replaceChildren(); closing.replaceChildren();
+        addFunction.disabled = true;
+        removeFunction.disabled = true;
+        save.disabled = true;
+        await refreshSymbols();
+        if (!symbols) throw new Error("Project symbols could not be loaded; use Refresh declarations and layout.");
+        const files = await request("/api/gel-files", { cache: "no-store" });
+        files.files.forEach(name => file.add(new Option(name, name)));
+        declarationFile.replaceChildren();
+        files.files.forEach(name => declarationFile.add(new Option(name, name)));
+        if (files.files.length) {
+            file.value = files.files.includes("game.gel") ? "game.gel" : files.files[0];
+            await openFile(file.value);
+            declarationFile.value = file.value;
+            await loadDeclarations(declarationFile.value);
+        } else {
+            declarationData = null;
+            renderDeclarations();
+            status.textContent = "No GEL files found in the project folder.";
+        }
+        if (project.warning) status.textContent = project.warning;
+    }
+
+    openProjectButton.addEventListener("click", async () => {
+        if (!mayDiscard()) return;
+        openProjectButton.disabled = true;
+        try {
+            const project = await request("/api/project/open", { method: "POST" });
+            if (project.cancelled) return;
+            await loadProjectState(project);
+        } catch (error) {
+            status.textContent = `Could not open project: ${error.message}`;
+        } finally {
+            openProjectButton.disabled = false;
+        }
+    });
 
     function snapshot() { return { blocks, additions, comments: commentEdits, locals: activeLocals, localTypes: activeLocalTypes }; }
     function dirty() { return history && JSON.stringify(snapshot()) !== initial; }
@@ -331,6 +921,7 @@
             } else if (item.kind === "part") {
                 const statement = fn.statements[item.index];
                 const host = el("div", "editable-statement");
+                host.dataset.sourcePart = String(item.index);
                 renderBlocks(blocks[item.index], host, changed, statement.fixed, undefined, zones && item.unit !== undefined ? item.unit : null);
                 container.append(host);
                 if (statement.insertion) {
@@ -698,10 +1289,12 @@
     function mayDiscard() {
         return !dirty() || window.confirm("Discard unsaved visual GEL edits?");
     }
-    async function openFile(name) {
+    async function openFile(name, expectedHash = null) {
+        const data = await request(`/api/gel-files/${encodeURIComponent(name)}`, { cache: "no-store" });
+        if (expectedHash !== null && data.hash !== expectedHash)
+            throw new Error("File changed since the search. Search again.");
         addFunction.disabled = true;
         removeFunction.disabled = true;
-        const data = await request(`/api/gel-files/${encodeURIComponent(name)}`, { cache: "no-store" });
         documentData = data;
         addFunction.disabled = data.name === "contact.gel";
         removeFunction.disabled = true;
@@ -841,14 +1434,8 @@
     });
     (async () => {
         try {
-            const files = await request("/api/gel-files", { cache: "no-store" });
-            await refreshSymbols();
-            if (!symbols) throw new Error("Project symbols could not be loaded; use Refresh declarations and layout.");
-            files.files.forEach(name => file.add(new Option(name, name)));
-            if (files.files.length) {
-                file.value = files.files.includes("game.gel") ? "game.gel" : files.files[0];
-                await openFile(file.value);
-            } else status.textContent = "No GEL files found in the project folder.";
+            const project = await request("/api/project", { cache: "no-store" });
+            await loadProjectState(project);
         } catch (error) { status.textContent = `Could not open project: ${error.message}`; }
     })();
 })();

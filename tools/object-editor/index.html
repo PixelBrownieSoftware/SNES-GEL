@@ -5,11 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GEL Object Editor</title>
   <link rel="stylesheet" href="editor.css?v=variants-5">
+  <link rel="stylesheet" href="../editor/navigation.css">
   <script defer src="editor.js?v=variants-5"></script>
 </head>
 <body>
+  <nav class="gel-navigation" aria-label="GEL editors">
+    <a href="/">Home</a><a href="/visual-gel/">Visual GEL</a><a href="/tile-editor/">Level editor</a><a href="/object-editor/" aria-current="page">Objects</a><a href="/contact-editor/">Contacts</a><a href="/metasprite-editor/">Metasprites</a><a href="/rom-overview/">ROM overview</a>
+  </nav>
   <main>
-    <nav><a href="/">All editors</a><a href="/contact-editor/">Contacts</a><a href="/metasprite-editor/">Metasprites</a></nav>
     <h1>Object editor</h1>
     <p>Define capabilities for Tiled object classes. Names match classes case-insensitively; numeric IDs are assigned by the level build.</p>
     <p class="notice">These flags are initialized on spawned entities, but the general flag-driven physics, input and contact systems are not implemented yet. Existing game behavior is unchanged.</p>

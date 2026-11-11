@@ -52,10 +52,10 @@
         if (index.defines.has(word)) return "t-define";
         if (index.enums.has(word)) return "t-enum";
         if (index.bit.has(word)) return "t-bit";
-        if (index.hardware.has(word) || /^std_/.test(word)) return "t-hw";
-        if (index.functions.has(word)) return "t-fn";
         if (locals.includes(word)) return localTypes[word] ? `t-${localTypes[word]}` : "";
         if (index.globals.has(word)) return `t-${index.globals.get(word)}`;
+        if (index.hardware.has(word) || /^std_/.test(word)) return "t-hw";
+        if (index.functions.has(word)) return "t-fn";
         return "";
     }
 

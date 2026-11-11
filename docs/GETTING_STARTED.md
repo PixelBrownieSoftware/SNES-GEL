@@ -45,6 +45,7 @@ Output goes to `<project>\build\game.sfc` (plus `game.sym` and `game.layout`).
 ```
 mygame/
   game.gel          main source (required); must define init_game()
+  gel-project.json  GEL editor project marker
   gel.json          ROM header and sound options (optional)
   assets/           *.png, level*.tmj + *.tsj (Tiled), *.metasprite.json
   sfx/              audio
@@ -68,6 +69,19 @@ larger than a LoROM build. ExLoROM and ExHiROM are not yet supported.
 Restart Mesen after changing the mapping or built ROM size: hot reload cannot
 replace the emulator's cartridge mapping or resize its ROM.
 
+`gel-project.json` identifies a folder as a project that can be opened in the Visual GEL editor:
+
+```json
+{
+  "format": "snes-gel-project",
+  "version": 1,
+  "name": "My Game"
+}
+```
+
+In the Visual GEL editor, choose **Open Project** and select this file. The editor remembers the
+last selected project in user-local settings; this path cache is not stored in the game folder.
+
 ## Assets
 
 - Every PNG in `assets/` is converted to SNES tiles and a palette in `build\`, and exposed to
@@ -85,11 +99,18 @@ replace the emulator's cartridge mapping or resize its ROM.
   image may be larger. A build reports how many banks are needed if it runs out.
   Small 32- and 64-wide maps keep their original one-bank layout. The example game's
   streamer scrolls large maps in both directions and keeps the camera within loaded VRAM.
-  Its reusable `game\level-stream.gel` expects `level-data.gel`, `cam_x` and `cam_y`,
-  BG2's tilemap at VRAM word `$4000`, 8×8 tiles, and a 256×224 viewport. Initialize it
-  while the screen is blanked, call `level_stream()` during VBlank, and clamp proposed
-  camera positions with `level_stream_clamp_x()` / `level_stream_clamp_y()`. Camera
-  following, physics and object spawning remain game-specific.
+  The optional stdlib modules `level-data.gel`, `level-collision.gel` and `level-stream.gel`
+  provide packed object/collision access, solid/slope probes and streaming. Include
+  `snes.gel` and `assets.gel` first, then `level-data.gel` before the other modules.
+  The streamer expects BG2's map at VRAM word `$4000`, 8×8 tiles, and a 256×224 viewport.
+  Call `level_stream_init(cam_x, cam_y)` while blanked, then call
+  `level_stream(cam_x, cam_y)` early in VBlank, before setting scroll. Clamp desired camera
+  positions to the world bounds and then to loaded coverage using `level_stream_clamp_x()`
+  and `level_stream_clamp_y()`. The streamer uses direct-page scratch `$04`–`$09`; don't use
+  it concurrently with code using those addresses. Its VBlank time checks assume NTSC timing.
+  `collision_code_at` treats out-of-bounds as solid; `solid_at`, `solid_h`, and `solid_v`
+  interpret the packed slope format (strip endpoints are inclusive). Camera following,
+  movement, physics, and object spawning remain game-specific.
 - Slopes: add `slope_start` and `slope_end` properties (int or float, in pixels) to a tileset
   tile. `slope_start` is the surface Y at the tile's left edge, measured down from the tile's top;
   `slope_end` is the surface Y at the right edge. Both may lie outside 0-8 (-16 to 16) so

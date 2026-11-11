@@ -6,6 +6,7 @@
   <title>GEL Contact Editor</title>
   <link rel="stylesheet" href="editor.css">
   <link rel="stylesheet" href="../visual-gel/editor.css?v=move-3">
+  <link rel="stylesheet" href="../editor/navigation.css">
   <script defer src="../visual-gel/model.js?v=move-3"></script>
   <script defer src="../visual-gel/editor.js?v=move-3"></script>
   <script defer src="../visual-gel/history.js"></script>
@@ -13,8 +14,10 @@
   <script defer src="editor.js"></script>
 </head>
 <body>
+  <nav class="gel-navigation" aria-label="GEL editors">
+    <a href="/">Home</a><a href="/visual-gel/">Visual GEL</a><a href="/tile-editor/">Level editor</a><a href="/object-editor/">Objects</a><a href="/contact-editor/" aria-current="page">Contacts</a><a href="/metasprite-editor/">Metasprites</a><a href="/rom-overview/">ROM overview</a>
+  </nav>
   <main>
-    <p><a href="/">All editors</a> | <a href="/visual-gel/">Visual GEL</a> | <a href="/object-editor/">Objects</a> | <a href="/metasprite-editor/">Metasprites</a></p>
     <h1>Contact editor</h1>
     <p>Configure directed interactions: <strong>self</strong> is the recipient and <strong>other</strong> is the entity it touches. Each handler receives <code>(self, other)</code>.</p>
     <p class="notice">Prototype: exported handlers are not automatically connected to the game. Define the named functions and include the generated GEL file in your project.</p>

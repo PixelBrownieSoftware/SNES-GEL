@@ -16,6 +16,70 @@ pytestmark = pytest.mark.skipif(sys.platform != "win32" or not MESEN.is_file(), 
 
 
 @pytest.mark.parametrize("mode", ["lorom", "hirom"])
+def test_stdlib_level_collision_in_mesen(tmp_path, mode):
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    image = Image.new("P", (16, 16))
+    image.putpalette([0, 0, 0] * 256)
+    image.save(assets / "terrain.png")
+    tiles = [1] * (96 * 65)
+    tiles[5 * 96 + 31] = 2
+    tiles[5 * 96 + 32] = 3
+    data = {
+        "width": 96, "height": 65, "tilewidth": 8, "tileheight": 8,
+        "layers": [{"type": "tilelayer", "name": "tiles", "data": tiles}],
+        "tilesets": [{"firstgid": 1, "tilewidth": 8, "tileheight": 8, "tiles": [
+            {"id": 1, "properties": [{"name": "solid", "value": True}]},
+            {"id": 2, "properties": [{"name": "slope_start", "value": 0},
+                                      {"name": "slope_end", "value": 8}]},
+        ]}],
+    }
+    (assets / "level.tmj").write_text(json.dumps(data), encoding="utf-8")
+    (tmp_path / "gel.json").write_text(json.dumps({"header": {"rom_mode": mode}}), encoding="utf-8")
+    (tmp_path / "game.gel").write_text(
+        '#include "snes.gel"\n#include "assets.gel"\n'
+        '#include "level-data.gel"\n#include "level-collision.gel"\n'
+        'u8 a; u8 b; u8 c; u8 d; u8 e; u8 f; u8 g; u8 ready;\n'
+        'fn init_game() { std_snes_init(); a = solid_at(256, 40); '
+        'b = solid_at(256, 41); c = solid_at(248, 40); '
+        'd = solid_h(40, 240, 256); e = solid_v(256, 40, 47); '
+        'f = solid_at(768, 40); g = solid_h(0, 65535, 65535); ready = 1; while (1) { } }\n',
+        encoding="utf-8")
+    build = subprocess.run([sys.executable, str(BUILD), str(tmp_path), "--release"],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+    assert build.returncode == 0, build.stdout + build.stderr
+    asm = (tmp_path / "build" / "build_output.asm").read_text()
+
+    def address(name):
+        found = re.search(rf"; ram\s+\w+\s+{name} @ \$([0-9A-Fa-f]+)", asm)
+        assert found, name
+        return int(found.group(1), 16)
+
+    addresses = ", ".join(str(address(name)) for name in "abcdefg")
+    script = tmp_path / "collision.lua"
+    script.write_text(
+        f"local ready, addresses = {address('ready')}, {{{addresses}}}\n"
+        'local frame=0; local wram=emu.memType.snesWorkRam\n'
+        'emu.write(ready,0,wram)\n'
+        'emu.addEventCallback(function()\n'
+        ' frame=frame+1\n'
+        ' if emu.read(ready,wram) ~= 0 or frame == 120 then\n'
+        '  local f=assert(io.open(os.getenv("GEL_STREAM_RESULT"),"w"))\n'
+        '  if emu.read(ready,wram)==0 then f:write("timeout") else\n'
+        '   for _,a in ipairs(addresses) do f:write(tostring(emu.read(a,wram))) end\n'
+        '  end\n'
+        '  f:close(); emu.stop(0)\n'
+        ' end\n'
+        'end,emu.eventType.endFrame)\n', encoding="utf-8")
+    result = tmp_path / "collision.txt"
+    run = subprocess.run([str(MESEN), "--testrunner", str(tmp_path / "build" / "game.sfc"), str(script)],
+                         cwd=tmp_path, env={**os.environ, "GEL_STREAM_RESULT": str(result)},
+                         capture_output=True, text=True, timeout=120)
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert result.read_text() == "0111111"
+
+
+@pytest.mark.parametrize("mode", ["lorom", "hirom"])
 def test_full_game_large_level_in_mesen(tmp_path, mode):
     project = tmp_path / "game"
     shutil.copytree(ROOT / "game", project, ignore=shutil.ignore_patterns("build"))
@@ -106,8 +170,8 @@ def test_extreme_chunked_levels_in_mesen(tmp_path, mode, width, height):
     source = (ROOT / "game" / "game.gel").read_text(encoding="utf-8")
     camera = "i16 cam_calc_x" + source.split("i16 cam_calc_x", 1)[1]
     camera = camera.split("// Advances the selected clip", 1)[0]
-    reader = (ROOT / "game" / "level-data.gel").read_text(encoding="utf-8")
-    stream = (ROOT / "game" / "level-stream.gel").read_text(encoding="utf-8")
+    reader = '#include "level-data.gel"\n'
+    stream = '#include "level-stream.gel"\n'
     max_x, max_y = width * 8 - 256, height * 8 - 224
     start_x, start_y = max(0, max_x - 128), max(0, max_y - 128)
     (tmp_path / "game.gel").write_text(
@@ -118,8 +182,8 @@ def test_extreme_chunked_levels_in_mesen(tmp_path, mode, width, height):
         + reader + stream + camera +
         f'\nfn init_game() {{ std_snes_init(); cam_x = {start_x}; cam_y = {start_y}; '
         f'Entities[0].x = {start_x}; Entities[0].y = {start_y}; '
-        'level_stream_init(); INIDISP = 15; while (1) { std_wait_vblank(); '
-        'level_stream(); update_camera(0); std_set_scroll(cam_x & 0x1FF, cam_y & 0xFF); '
+        'level_stream_init(cam_x, cam_y); INIDISP = 15; while (1) { std_wait_vblank(); '
+        'level_stream(cam_x, cam_y); update_camera(0); std_set_scroll(cam_x & 0x1FF, cam_y & 0xFF); '
         'collision_result = collision_code_at(cam_x, cam_y); } }\n',
         encoding="utf-8")
     build = subprocess.run([sys.executable, str(BUILD), str(tmp_path), "--release"],
@@ -192,13 +256,13 @@ def test_large_level_streaming_and_collision_in_mesen(tmp_path, mode):
     (assets / "level.tmj").write_text(json.dumps(map_data), encoding="utf-8")
     (tmp_path / "gel.json").write_text(json.dumps({"header": {"rom_mode": mode}}), encoding="utf-8")
     source = (ROOT / "game" / "game.gel").read_text(encoding="utf-8")
-    stream = (ROOT / "game" / "level-stream.gel").read_text(encoding="utf-8")
-    reader = (ROOT / "game" / "level-data.gel").read_text(encoding="utf-8")
+    stream = '#include "level-stream.gel"\n'
+    reader = '#include "level-data.gel"\n'
     (tmp_path / "game.gel").write_text(
         '#include "snes.gel"\n#include "assets.gel"\n'
         'u16 cam_x; u16 cam_y; u8 collision_result;\n' + reader + stream +
-        '\nfn init_game() { std_snes_init(); level_stream_init(); INIDISP = 15; '
-        'while (1) { std_wait_vblank(); level_stream(); '
+        '\nfn init_game() { std_snes_init(); level_stream_init(cam_x, cam_y); INIDISP = 15; '
+        'while (1) { std_wait_vblank(); level_stream(cam_x, cam_y); '
         'std_set_scroll(cam_x & 0x1FF, cam_y & 0xFF); '
         'collision_result = collision_code_at(cam_x, cam_y); } }\n',
         encoding="utf-8")
@@ -293,8 +357,8 @@ def test_large_level_streaming_and_collision_in_mesen(tmp_path, mode):
         '#define CAM_OFFSET_X 0\n#define CAM_OFFSET_Y 0\n'
         'u16 cam_x; u16 cam_y; struct_table Entities[1] { u16 x; u16 y; }\n'
         + reader + stream + camera +
-        '\nfn init_game() { std_snes_init(); level_stream_init(); INIDISP = 15; '
-        'while (1) { std_wait_vblank(); level_stream(); update_camera(0); '
+        '\nfn init_game() { std_snes_init(); level_stream_init(cam_x, cam_y); INIDISP = 15; '
+        'while (1) { std_wait_vblank(); level_stream(cam_x, cam_y); update_camera(0); '
         'std_set_scroll(cam_x & 0x1FF, cam_y & 0xFF); } }\n',
         encoding="utf-8")
     build = subprocess.run([sys.executable, str(BUILD), str(tmp_path), "--release"],

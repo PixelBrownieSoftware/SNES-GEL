@@ -35,6 +35,11 @@ def test_missing_build_and_compiled_symbol_layout(tmp_path):
                    {"name": "x", "type": "u16", "address": 0x60A, "stride": 2}]}
     assert result["tables"][1]["mask"] is None
     assert result["tables"][1]["fields"][0]["stride"] == 4
+    assert result["reserved"] == [
+        {"name": "Compiler scratch", "start": 0, "end": 0x0F},
+        {"name": "Sound driver", "start": 0xE8, "end": 0xFF},
+        {"name": "Stack", "start": 0x1F00, "end": 0x1FFF},
+    ]
 
 
 def test_malformed_summary_is_not_silently_reported_as_empty(tmp_path):

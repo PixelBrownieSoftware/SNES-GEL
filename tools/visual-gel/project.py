@@ -280,6 +280,8 @@ def functions(source):
                         typ, name = str(item.children[0]), str(item.children[1])
                     elif item.data == "table_iter_stmt":
                         typ, name = "u16", str(item.children[1])
+                        if name not in entry["locals"]:
+                            entry["locals"].append(name)
                     else:
                         continue
                     if name in types:

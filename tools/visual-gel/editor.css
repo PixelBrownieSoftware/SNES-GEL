@@ -38,6 +38,25 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .changed-file summary, .affected-calls summary { cursor: pointer; }
 .file-functions { margin: .4rem 0 .2rem; padding-left: 1.5rem; }
 .symbol-section { margin: .8rem 0; }
+.declaration-row { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; padding: .4rem; border-bottom: 1px solid #40485c; }
+.declaration-row code { flex: 1; white-space: pre-wrap; overflow-wrap: anywhere; }
+.declaration-row strong.t-define, .declaration-row strong.t-table { font-weight: bold; }
+.table-fields { display: grid; gap: .4rem; margin: .6rem 0; }
+.table-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .5rem; }
+.table-controls[hidden] { display: none; }
+.table-controls label { display: grid; gap: .2rem; }
+.table-controls input, .table-controls select { width: auto; }
+.declaration-preview { max-width: min(90vw, 65rem); max-height: 85vh; overflow: auto; }
+.declaration-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.address-range-list { max-height: 12rem; overflow-y: auto; margin: .4rem 0; padding-left: 1.5rem; }
+.address-range-list li { margin: .2rem 0; }
+.address-range-list button { margin-left: .5rem; }
+.usage-results { max-height: 48vh; overflow-y: auto; padding-left: 1.5rem; }
+.usage-results li { margin: .7rem 0; overflow-wrap: anywhere; }
+.usage-results code { display: block; white-space: pre-wrap; }
+.usage-results button { margin-top: .2rem; }
+.usage-target { outline: 2px solid #ffc90e; outline-offset: 3px; }
+#declaration-code { display: block; width: min(70vw, 48rem); font-family: Consolas, monospace; }
 .editor-tabs { display: flex; gap: .4rem; margin: 1.2rem 0; border-bottom: 1px solid #40485c; }
 .editor-tabs [aria-selected="true"] { background: #4a5b8c; border-color: #9db4ff; }
 .symbol-heading { display: flex; align-items: center; gap: .6rem; }

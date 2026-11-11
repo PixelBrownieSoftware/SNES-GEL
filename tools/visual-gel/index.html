@@ -5,17 +5,27 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Visual GEL Editor</title>
   <link rel="stylesheet" href="../contact-editor/editor.css">
-  <link rel="stylesheet" href="editor.css?v=clip-2">
+  <link rel="stylesheet" href="editor.css?v=declarations-2">
+  <link rel="stylesheet" href="../editor/navigation.css">
   <script defer src="model.js?v=clip-2"></script>
   <script defer src="history.js"></script>
   <script defer src="editor.js?v=clip-2"></script>
   <script defer src="memory-layout.js"></script>
-  <script defer src="project-editor.js?v=clip-2"></script>
+  <script defer src="table-editor.js?v=1"></script>
+  <script defer src="define-editor.js?v=1"></script>
+  <script defer src="global-editor.js?v=1"></script>
+  <script defer src="project-editor.js?v=declarations-3"></script>
 </head>
 <body>
+  <nav class="gel-navigation" aria-label="GEL editors">
+    <a href="/">Home</a><a href="/visual-gel/" aria-current="page">Visual GEL</a><a href="/tile-editor/">Level editor</a><a href="/object-editor/">Objects</a><a href="/contact-editor/">Contacts</a><a href="/metasprite-editor/">Metasprites</a><a href="/rom-overview/">ROM overview</a>
+  </nav>
   <main>
-    <p><a href="/">All editors</a> | <a href="/contact-editor/">Contact editor</a></p>
     <h1>Visual GEL editor</h1>
+    <div class="toolbar">
+      <button id="open-project" type="button">Open Project</button>
+      <span id="project-name" role="status" aria-live="polite"></span>
+    </div>
     <p>Open a project GEL file and choose a function. Edit statements and control-flow headers as blocks, or add blocks inside existing bodies. Comments, assembly and unsupported source are preserved read-only.</p>
     <p class="notice">This is an incremental editor, not full GEL coverage. Syntax is checked before saving; the game build is still needed to check symbols and types. Changes to generated contact.gel belong in the contact editor.</p>
     <div class="editor-tabs" role="tablist" aria-label="Visual GEL views">
@@ -24,7 +34,53 @@
     </div>
     <section id="declarations-panel" role="tabpanel" aria-labelledby="declarations-tab" hidden>
       <h2>Declarations &amp; memory</h2>
-      <p>Declarations are currently read-only here. Memory addresses come from the latest compiler output, not the live game; rebuild after changes. A failed build can leave this output out of date.</p>
+      <p>Edit declarations in project files below. Renames can preview reference updates before confirmation. Generated files and the symbol overview remain read-only. Memory addresses come from the latest compiler output, not the live game; a failed build can leave it out of date.</p>
+      <section aria-labelledby="declaration-editor-heading">
+        <h3 id="declaration-editor-heading">Edit project declarations</h3>
+        <div class="toolbar">
+          <label>File <select id="declaration-file" aria-label="Declaration file"></select></label>
+          <button id="declaration-reload" type="button">Reload declarations</button>
+          <button id="add-define" type="button">+ Define</button>
+          <button id="add-global" type="button">+ Global</button>
+          <button id="add-table" type="button">+ Struct table</button>
+        </div>
+        <p id="declaration-status" role="status" aria-live="polite"></p>
+        <div id="declaration-list"></div>
+      </section>
+      <dialog id="declaration-dialog" class="parameter-editor">
+        <form id="declaration-form">
+          <h3 id="declaration-dialog-title"></h3>
+          <p>Changes preserve surrounding source. Build after editing to check references and memory layout.</p>
+          <div id="table-controls" hidden></div>
+          <div id="define-controls" hidden>
+            <label>Name <input id="define-name" type="text"></label>
+            <label>Value <input id="define-value" type="text"></label>
+          </div>
+          <div id="global-controls" hidden>
+            <label>Type <select id="global-type">
+              <option value="u8">u8</option><option value="u16">u16</option>
+              <option value="i8">i8</option><option value="i16">i16</option>
+              <option value="f16">f16</option><option value="f32">f32</option>
+            </select></label>
+            <label>Name <input id="global-name" type="text"></label>
+            <label>Initial value <input id="global-value" type="text"></label>
+            <label>Storage <select id="global-storage">
+              <option value="">Default</option><option value="dp">Direct page</option>
+              <option value="persist">Persist</option><option value="mmio">MMIO</option>
+            </select></label>
+            <label>Fixed address <input id="global-address" type="text" placeholder="Optional"></label>
+          </div>
+          <p id="global-storage-hint" hidden>Persist variables cannot use a fixed address. MMIO variables require one.</p>
+          <section id="global-memory" hidden>
+            <p id="global-address-status" role="status"></p>
+            <div id="global-memory-ranges"></div>
+          </section>
+          <label><input id="declaration-rename" type="checkbox" checked> Preview and update references when renaming</label>
+          <p id="declaration-error" class="parameter-message" role="alert"></p>
+          <button type="submit">Save declaration</button>
+          <button id="declaration-cancel" type="button">Cancel</button>
+        </form>
+      </dialog>
       <label>Filter declarations <input id="symbol-filter" type="search" placeholder="Search names"></label>
       <button id="refresh-symbols" type="button">Refresh declarations and layout</button>
       <p id="symbols-status" role="status" aria-live="polite"></p>

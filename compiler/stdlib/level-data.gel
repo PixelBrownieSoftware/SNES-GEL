@@ -1,5 +1,5 @@
-// Read the packed level data produced by level_pack.py. Gameplay systems decide
-// how to use these records; this file does not create entities or upload tiles.
+// Read the generated LEVEL_* packed level data. Include after assets.gel.
+// Gameplay systems decide how to use these records.
 // Each object record is six bytes: type, x (16-bit), y (16-bit), param.
 #define OBJ_ENTRY_SIZE 6
 #define TILE_COORD_MASK 7

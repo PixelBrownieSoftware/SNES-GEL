@@ -1,0 +1,79 @@
+// Collision probes for the packed slope format. Include level-data.gel first.
+#define TILE_SIZE_PX                 8
+#define TILE_LAST_PIXEL              7
+#define TILE_ROW_MASK                0xFFF8
+#define COLLISION_EMPTY              0
+#define COLLISION_NEAR_SLOPE         0x40
+#define COLLISION_SLOPE_FLAG         0x80
+#define SLOPE_BIAS_PX                8
+
+// `code` is the collision byte already read at (wx, wy), avoiding a second read.
+fn solid_with_code(u16 wx, u16 wy, u8 code) {
+    if (code == COLLISION_EMPTY) { return 0; }
+    if (code != COLLISION_NEAR_SLOPE && !(code & COLLISION_SLOPE_FLAG)) { return 1; }
+
+    u8 current_code = code;
+    u16 row = wy & TILE_ROW_MASK;
+    u16 y_in_tile = wy & TILE_COORD_MASK;
+    u16 surface;
+    if (row >= TILE_SIZE_PX) {
+        code = collision_code_at(wx, row - TILE_SIZE_PX);
+        if (code & COLLISION_SLOPE_FLAG) {
+            surface = slope_surface_at_x(code, wx);
+            if (y_in_tile + TILE_SIZE_PX + SLOPE_BIAS_PX >= surface) { return 1; }
+        }
+    }
+    if (current_code & COLLISION_SLOPE_FLAG) {
+        surface = slope_surface_at_x(current_code, wx);
+        if (y_in_tile + SLOPE_BIAS_PX >= surface) { return 1; }
+    }
+    if (row + TILE_SIZE_PX < LEVEL_HEIGHT_PX) {
+        code = collision_code_at(wx, row + TILE_SIZE_PX);
+        if (code & COLLISION_SLOPE_FLAG) {
+            surface = slope_surface_at_x(code, wx);
+            if (surface <= TILE_LAST_PIXEL && y_in_tile >= surface) { return 1; }
+        }
+    }
+    return 0;
+}
+
+fn solid_at(u16 wx, u16 wy) {
+    return solid_with_code(wx, wy, collision_code_at(wx, wy));
+}
+
+// Endpoints are inclusive.
+fn solid_v(u16 wx, u16 wy_top, u16 wy_bot) {
+    u16 y = wy_bot;
+    u8 scanning = 1;
+    while (scanning) {
+        u8 code = collision_code_at(wx, y);
+        if (code != COLLISION_EMPTY) {
+            if (solid_with_code(wx, y, code)) { return 1; }
+        }
+        u16 tile_top = y & TILE_ROW_MASK;
+        if (tile_top <= wy_top) {
+            scanning = 0;
+        } else {
+            y = tile_top - 1;
+        }
+    }
+    return 0;
+}
+
+fn solid_h(u16 wy, u16 wx_left, u16 wx_right) {
+    u16 x = wx_left;
+    while (x <= wx_right) {
+        u16 tile_right = x | TILE_COORD_MASK;
+        if (tile_right > wx_right) { tile_right = wx_right; }
+        u8 code = collision_code_at(x, wy);
+        if (code != COLLISION_EMPTY) {
+            if (solid_with_code(x, wy, code)) { return 1; }
+            if (tile_right != x) {
+                if (solid_at(tile_right, wy)) { return 1; }
+            }
+        }
+        if (tile_right == wx_right) { return 0; }
+        x = tile_right + 1;
+    }
+    return 0;
+}

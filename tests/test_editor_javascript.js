@@ -8,6 +8,23 @@ const vm = require("node:vm");
 const fs = require("node:fs");
 const path = require("node:path");
 
+test("global symbols use their type colours and defines retain define colour", () => {
+    const document = {
+        addEventListener() {},
+        createDocumentFragment() { return { children: [], append(node) { this.children.push(node); } }; },
+        createElement() { return { className: "", textContent: "" }; }
+    };
+    const context = { document, VisualGelModel: visual };
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, "../tools/visual-gel/editor.js"), "utf8"), context);
+    const editor = context.createVisualGelEditor({ status: {} });
+    editor.setIndex(editor.buildIndex({ globals: { REG: "u8", score: "u16", LIMIT: "i16" },
+        hardware: ["REG"], defines: ["LIMIT"] }));
+    const target = { replaceChildren(fragment) { this.children = fragment.children; } };
+    editor.highlight("REG score LIMIT", target);
+    assert.deepEqual(target.children.filter(item => item.textContent.trim()).map(item => item.className),
+        ["t-u8", "t-u16", "t-define"]);
+});
+
 test("define compatibility distinguishes literal, fixed-point and unknown values", () => {
     const values = { GOOD: "0xFF", TOO_BIG: "256", NEGATIVE: "-1",
         DECIMAL: "1.0", SPEED: "4.4", RAW: "1", EXPR: "1 + 2",

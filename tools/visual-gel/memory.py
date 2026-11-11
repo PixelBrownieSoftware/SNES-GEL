@@ -3,6 +3,7 @@
 import re
 from pathlib import Path
 
+from gel_codegen import DP_START, SOUND_DP, STACK_TOP, TABLE_END
 
 VARIABLE = re.compile(r"^; (ram|mmio)\s+(\w+)\s+(\w+) @ \$([0-9A-Fa-f]+)$")
 TABLE = re.compile(r"^; table (\w+)\[(\d+)\](?:, pool mask @ \$([0-9A-Fa-f]+))?$")
@@ -10,9 +11,14 @@ FIELD = re.compile(r"^;\s+\.(\w+) (\w+) @ \$([0-9A-Fa-f]+) \(\+(\d+)/slot\)$")
 
 
 def memory_layout(project):
+    reserved = [
+        {"name": "Compiler scratch", "start": 0, "end": DP_START - 1},
+        {"name": "Sound driver", "start": SOUND_DP[0], "end": SOUND_DP[1]},
+        {"name": "Stack", "start": TABLE_END + 1, "end": STACK_TOP},
+    ]
     path = Path(project) / "build" / "build_output.asm"
     if not path.is_file():
-        return {"available": False, "variables": [], "tables": []}
+        return {"available": False, "variables": [], "tables": [], "reserved": reserved}
     lines = path.read_text(encoding="utf-8").splitlines()
     try:
         start = lines.index("; --- Symbols ---") + 1
@@ -41,4 +47,4 @@ def memory_layout(project):
                                     "address": int(address, 16), "stride": int(stride)})
         elif line.strip():
             raise ValueError(f"Unrecognized compiler symbol summary line: {line}")
-    return {"available": True, "variables": variables, "tables": tables}
+    return {"available": True, "variables": variables, "tables": tables, "reserved": reserved}
