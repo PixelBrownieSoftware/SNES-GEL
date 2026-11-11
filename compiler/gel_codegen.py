@@ -1185,13 +1185,23 @@ class Compiler:
         if name == "clamp":
             return self.clamp(args, node)
         if name == "peek8l":
-            c = self.const(args[0]) if len(args) == 2 else None
-            if c is None:
-                self.error("'peek8l' takes 2 arguments: a constant bank number and a 16-bit address", node)
-            self.expr(args[1])
-            self.emit("TAX")
-            self.want_m(8)
-            self.emit(f"LDA.l ${c[0] & 0xFF:02X}0000,X")
+            if len(args) != 2:
+                self.error("'peek8l' takes 2 arguments: a bank number and a 16-bit address", node)
+            c = self.const(args[0])
+            if c is not None:
+                self.expr(args[1])
+                self.emit("TAX")
+                self.want_m(8)
+                self.emit(f"LDA.l ${c[0] & 0xFF:02X}0000,X")
+            else:
+                self.expr(args[0])
+                self.emit("PHA")
+                self.expr(args[1])
+                self.emit("STA $00")
+                self.emit("PLA")
+                self.want_m(8)
+                self.emit("STA $02")
+                self.emit("LDA [$00]")
             self.want_m(16)
             self.emit("AND.w #$00FF")
             return "u8"
@@ -1710,7 +1720,9 @@ class Compiler:
         else:
             nmi_vec = "$0000"
         call_main = "    JSR init_game" if "init_game" in self.funcs else "    ; (no init_game() defined)"
-        boot = BOOT.replace("{STACK}", f"${STACK_TOP:04X}").replace("{CALL_MAIN}", call_main)
+        fastrom = (self.header_cfg or {}).get("fastrom", True)
+        boot = BOOT.replace("{STACK}", f"${STACK_TOP:04X}").replace("{CALL_MAIN}", call_main) \
+                   .replace("{MEMSEL}", "$01" if fastrom else "$00")
         volatile = {tick.addr} if tick is not None else set()
         flat = "\n".join(self.out).split("\n")
         body = flat if not self.optimize else peephole.optimize(flat, volatile)
@@ -1727,6 +1739,8 @@ DEFAULT_HEADER = {
     "region": 1,          # 0 = Japan, 1 = USA, 2 = Europe
     "developer": 0,
     "version": 0,
+    "rom_mode": "lorom",
+    "fastrom": True,
 }
 
 
@@ -1735,10 +1749,22 @@ def size_code(kb):
     return max(kb, 1).bit_length() - 1 if kb else 0
 
 
+def validate_rom_mode(cfg=None):
+    mode = (cfg or {}).get("rom_mode", "lorom")
+    if not isinstance(mode, str) or mode.lower() not in ("lorom", "hirom"):
+        raise ValueError(f"Unsupported ROM mapping {mode!r}; supported mappings are LoROM and HiROM.")
+    if type((cfg or {}).get("fastrom", True)) is not bool:
+        raise ValueError("header.fastrom must be true or false.")
+
+
 def make_header(cfg=None):
+    validate_rom_mode(cfg)
     c = {**DEFAULT_HEADER, **(cfg or {})}
     title = "".join(ch if 32 <= ord(ch) < 127 else "?" for ch in str(c["title"]))[:21].ljust(21)
-    return HEADER.replace("{TITLE}", title.replace('"', "'")) \
+    mode = c["rom_mode"].lower()
+    map_byte = 0x20 | (mode == "hirom") | (0x10 if c["fastrom"] else 0)
+    return HEADER.replace("{MAPPING}", mode).replace("{MAPBYTE}", f"${map_byte:02X}") \
+        .replace("{TITLE}", title.replace('"', "'")) \
         .replace("{ROMTYPE}", "$02" if c["sram_kb"] else "$00") \
         .replace("{ROMSIZE}", f"${size_code(c['rom_size_kb']):02X}") \
         .replace("{RAMSIZE}", f"${size_code(c['sram_kb']):02X}") \
@@ -1747,12 +1773,12 @@ def make_header(cfg=None):
         .replace("{VERSION}", f"${int(c['version']):02X}")
 
 
-HEADER = """lorom
+HEADER = """{MAPPING}
 
 ; --- SNES ROM Header ---
 org $00FFC0
     db "{TITLE}" ; 21 bytes title
-    db $30                      ; Mode 30 (FastROM LoROM)
+    db {MAPBYTE}                      ; ROM mapping and speed
     db {ROMTYPE}                      ; ROM type (ROM, or ROM + battery SRAM)
     db {ROMSIZE}                      ; ROM size, 2^n KB
     db {RAMSIZE}                      ; SRAM size, 2^n KB
@@ -1783,9 +1809,9 @@ _gel_boot:
     CLC
     XCE                         ; Switch 65C816 to Native 16-bit Mode
     SEP #$20
-    LDA #$01
-    STA $420D                   ; FastROM: banks $80+ run ROM at 3.58 MHz
-    JML _gel_boot_fast          ; Leave bank $00 (slow) for its bank $80 mirror
+    LDA #{MEMSEL}
+    STA $420D                   ; Select cartridge ROM speed
+    JML _gel_boot_fast          ; Leave bank $00 for its bank $80 mirror
 _gel_boot_fast:
     REP #$10                    ; 16-bit Index Registers (X/Y)
     LDX.w #{STACK}

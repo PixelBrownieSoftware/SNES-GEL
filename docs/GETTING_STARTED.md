@@ -60,6 +60,14 @@ mygame/
 }
 ```
 
+Set `header.rom_mode` to `"lorom"` (default) or `"hirom"`. Set `header.fastrom`
+to `true` (default) for FastROM or `false` for SlowROM; a physical FastROM
+cartridge must support the faster access. HiROM stores GEL's 32 KiB level and
+sound chunks in the upper half of 64 KiB banks, so the resulting ROM may be
+larger than a LoROM build. ExLoROM and ExHiROM are not yet supported.
+Restart Mesen after changing the mapping or built ROM size: hot reload cannot
+replace the emulator's cartridge mapping or resize its ROM.
+
 ## Assets
 
 - Every PNG in `assets/` is converted to SNES tiles and a palette in `build\`, and exposed to
@@ -67,6 +75,21 @@ mygame/
 - Levels: `level*.tmj` (Tiled) is converted to a tile map, a collision map and an object table.
   The tileset is `terrain.tsj`; a tile is solid when its `solid` property is set. If no `.tmj`
   exists the legacy `level.png` (colour to tile mapping) is used.
+  Widths are multiples of 32 from 32 to 4064 tiles; heights are 32 to 4095 tiles.
+  These are coordinate limits, not a guarantee that every combination fits: all levels,
+  sound and other assets share the available ROM banks. Larger maps use uncompressed
+  32×32 chunks, with 2 bytes per tile for the map and 1 for collision, padded to full
+  chunks. Thus a shorter map can be wider for the same ROM budget, and vice versa.
+  For example, 1024×96 tiles requires 10 logical 32 KiB banks including metadata;
+  4064×32 requires 13. HiROM uses the upper 32 KiB of each 64 KiB bank, so its ROM
+  image may be larger. A build reports how many banks are needed if it runs out.
+  Small 32- and 64-wide maps keep their original one-bank layout. The example game's
+  streamer scrolls large maps in both directions and keeps the camera within loaded VRAM.
+  Its reusable `game\level-stream.gel` expects `level-data.gel`, `cam_x` and `cam_y`,
+  BG2's tilemap at VRAM word `$4000`, 8×8 tiles, and a 256×224 viewport. Initialize it
+  while the screen is blanked, call `level_stream()` during VBlank, and clamp proposed
+  camera positions with `level_stream_clamp_x()` / `level_stream_clamp_y()`. Camera
+  following, physics and object spawning remain game-specific.
 - Slopes: add `slope_start` and `slope_end` properties (int or float, in pixels) to a tileset
   tile. `slope_start` is the surface Y at the tile's left edge, measured down from the tile's top;
   `slope_end` is the surface Y at the right edge. Both may lie outside 0-8 (-16 to 16) so
@@ -85,7 +108,9 @@ mygame/
 ## Level editing with Tiled
 
 1. Open `game\assets\puzzleplatform.tiled-project`.
-2. Edit `level.tmj` and save. The bridge detects the `.tmj`/`.tsj` change, rebuilds and
+2. Resize or edit `level.tmj` in Tiled and save. The GEL level editor can paint these maps;
+   resizing is done in Tiled. Large maps are displayed at a smaller scale in the editor.
+   The bridge detects the `.tmj`/`.tsj` change, rebuilds and
    reloads the running ROM.
 3. Object layer entries become the `LEVEL_OBJECTS` table (`OBJ_*` types; see the `obj_*`
    helpers in `game\game.gel`).

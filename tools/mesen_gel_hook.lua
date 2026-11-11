@@ -7,6 +7,7 @@
 local PROJECT_DIR = "@BUILD_DIR@"   -- filled in by compiler/build.py when it writes build/gel_hook.lua
 local SIGNAL_FILE = PROJECT_DIR .. "hotreload.signal"
 local ROM_FILE    = PROJECT_DIR .. "game.sfc"
+local ROM_MODE    = "@ROM_MODE@"
 
 -- Filled from game.layout and the HB_W/HB_H defines on each dev build.
 local PLAYER_X_ADDR = @PLAYER_X_ADDR@
@@ -27,8 +28,9 @@ local function read_signal()
     local ts = f:read("*n")
     f:read("*l")
     local name = f:read("*l")
+    local mode = f:read("*l")
     f:close()
-    return ts, name
+    return ts, name, mode
 end
 
 -- Ignore any signal left over from before Mesen started.
@@ -49,7 +51,11 @@ local function stage_persist_state()
     emu.write(STAGE_MAGIC + 1, 0xA5, wram)
 end
 
-local function reload_rom()
+local function reload_rom(mode)
+    if mode ~= ROM_MODE then
+        emu.log("[GEL Hot-Reload] ROM mapping changed or is missing; restart Mesen.")
+        return false
+    end
     local f = io.open(ROM_FILE, "rb")
     if not f then
         emu.log("[GEL Hot-Reload] Cannot open " .. ROM_FILE)
@@ -58,11 +64,13 @@ local function reload_rom()
     local data = f:read("*a")
     f:close()
 
-    stage_persist_state()
-
     local size = emu.getMemorySize and emu.getMemorySize(emu.memType.snesPrgRom) or #data
-    local count = math.min(#data, size)
-    for i = 1, count do
+    if #data ~= size then
+        emu.log("[GEL Hot-Reload] ROM size changed; restart Mesen.")
+        return false
+    end
+    stage_persist_state()
+    for i = 1, size do
         emu.write(i - 1, data:byte(i), emu.memType.snesPrgRom)
     end
     emu.reset()
@@ -268,11 +276,11 @@ local function draw_collision_bounds()
 end
 
 function on_end_frame()
-    local ts, name = read_signal()
+    local ts, name, mode = read_signal()
     if ts and ts > last_modified then
         last_modified = ts
         local info = (name and name ~= "") and (" (" .. name .. ")") or ""
-        if reload_rom() then
+        if reload_rom(mode) then
             load_slope_collision()
             emu.log("[GEL Hot-Reload] ROM reloaded" .. info)
         end

@@ -3,7 +3,8 @@
 ; SNESMOD (C) 2009 Mukunda Johnson, see tools/snesmod-main/LICENSING.txt.
 ;
 ; Differences from the original:
-;   * LoROM only. The sample streaming ("digi") part is not included.
+;   * The soundbank uses $8000-$FFFF chunks in consecutive banks. The sample
+;     streaming ("digi") part is not included.
 ;   * Direct-page state lives at $E8-$F8, which GEL leaves unallocated (DP_END).
 ;   * The command fifo lives at WRAM $0500-$05FF, which GEL leaves unallocated.
 ;   * The soundbank bank is passed to spcSetBank (A = bank, 8-bit A).

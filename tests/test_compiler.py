@@ -13,6 +13,51 @@ def test_minimal_program_compiles():
     assert "JSR init_game" in asm
 
 
+@pytest.mark.parametrize("mode", ["exlorom", "exhirom", None, 1])
+def test_unsupported_rom_mappings_are_rejected(mode):
+    with pytest.raises(ValueError, match="supported mappings"):
+        compile_src("fn init_game() { }", header={"rom_mode": mode})
+
+
+def test_lorom_header_is_generated():
+    asm, _ = compile_src("fn init_game() { }", header={"rom_mode": "LoROM"})
+    assert asm.startswith("lorom\n")
+    assert "db $30" in asm
+
+
+@pytest.mark.parametrize("optimize", [False, True])
+def test_peek8l_supports_runtime_bank_and_constant_bank(optimize):
+    asm, _ = compile_src(
+        "u8 bank; u16 address; u8 result; "
+        "fn init_game() { result = peek8l(bank, address); result = peek8l(0x84, address); }",
+        optimize=optimize)
+    assert "LDA [$00]" in asm
+    assert "LDA.l $840000,X" in asm
+
+
+@pytest.mark.parametrize("call", ["peek8l(1)", "peek8l(1, 2, 3)"])
+def test_peek8l_rejects_wrong_argument_count(call):
+    with pytest.raises(Exception, match="takes 2 arguments"):
+        compile_src(f"fn init_game() {{ {call}; }}")
+
+
+@pytest.mark.parametrize("mode,fast,byte", [
+    ("lorom", True, "$30"), ("lorom", False, "$20"),
+    ("hirom", True, "$31"), ("hirom", False, "$21"),
+])
+def test_mapping_and_speed_header_and_boot(mode, fast, byte):
+    asm, _ = compile_src("fn init_game() { }", header={"rom_mode": mode, "fastrom": fast})
+    assert asm.startswith(mode + "\n")
+    assert f"db {byte}" in asm
+    assert f"LDA #{'$01' if fast else '$00'}\n    STA $420D" in asm
+
+
+@pytest.mark.parametrize("fast", ["false", 0, None])
+def test_invalid_rom_speed_is_rejected(fast):
+    with pytest.raises(ValueError, match="fastrom must be true or false"):
+        compile_src("fn init_game() { }", header={"fastrom": fast})
+
+
 @pytest.mark.parametrize("optimize", [False, True])
 def test_typed_return_sign_extension_and_fixed_arithmetic(optimize):
     source = """

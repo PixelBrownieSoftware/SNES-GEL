@@ -180,6 +180,20 @@ metasprite editors for the same project. Pass a game folder as the first argumen
 project; `--assets-dir` overrides its assets folder. The existing editor launchers also start
 this server. Run only one server per port.
 
+The **Level editor** opens the project's `assets/level*.tmj` maps. Drag over the first
+tileset to select a rectangular stamp, or use Rectangle select to copy tiles from the active map
+layer; paint places the stamp, including empty cells, and erase clears tiles. Select and drag an
+object's hitbox to move it, or edit its Tiled position and `param` (variant). Hitbox dimensions
+come from the variant's `w` and `h` fields; objects without them use the Tiled object size or an
+8×8 marker. Undo and redo (also Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z) apply to paint strokes, object
+drags and object field changes; history resets when a map is loaded or reloaded. The map
+previews the variant's metasprite and shows its ID, using the same project ordering as the build.
+Save writes the original Tiled map and rejects changes if it changed on disk. This first version
+does not create maps, layers or objects, edit tileset properties, or support infinite maps; use
+Tiled for those tasks. Metasprite previews use the first clip's first frame and do not simulate
+animation or runtime palette changes.
+
+
 The object editor saves `objects.json`: each definition matches a Tiled object class (or its
 fallback name) case-insensitively. Use letters, digits and underscores; the build assigns numeric
 IDs, including for defined classes not present in a built level. On build, the sample game

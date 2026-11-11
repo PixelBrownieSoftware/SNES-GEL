@@ -1,0 +1,11 @@
+.workspace { display: grid; grid-template-columns: minmax(210px, 270px) minmax(0, 1fr); gap: 1rem; }
+.workspace aside { display: flex; flex-direction: column; gap: .55rem; }
+.workspace aside h2, .workspace aside p { margin: .35rem 0; }
+.workspace label { display: block; }
+.workspace input[type=number] { width: 7rem; }
+.workspace fieldset label { display: inline-block; margin-right: .5rem; }
+.map-scroll { overflow: auto; max-height: 75vh; border: 1px solid #53617a; background: #222b38; }
+canvas { image-rendering: pixelated; }
+#map { display: block; cursor: crosshair; touch-action: none; }
+#palette { max-width: 100%; background: #333; cursor: crosshair; touch-action: none; }
+@media (max-width: 700px) { .workspace { grid-template-columns: 1fr; } }

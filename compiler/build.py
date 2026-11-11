@@ -21,7 +21,7 @@ COMPILER_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(COMPILER_DIR)
 sys.path.insert(0, COMPILER_DIR)
 
-from gel_codegen import compile_gel  # noqa: E402
+from gel_codegen import compile_gel, validate_rom_mode  # noqa: E402
 from build_cache import StageCache, make_key  # noqa: E402
 import object_definitions  # noqa: E402
 
@@ -45,7 +45,7 @@ HOOK_TEMPLATE = os.path.join(ROOT, "tools", "mesen_gel_hook.lua")
 STDLIB_DIR = os.path.join(COMPILER_DIR, "stdlib")
 
 # Sound: the driver code sits in the main bank, its SPC program in the next bank, and the
-# soundbank (which needs whole banks to itself) after that. All LoROM $8000-$FFFF banks.
+# soundbank (which needs whole banks to itself) after that. Data occupies $8000-$FFFF.
 SPC_PROGRAM_BANK = 0x81
 SOUNDBANK_BANK = 0x82
 CODE_LIMIT_WITH_ASSETS = 0xC000     # default start of the assets in bank $80; gel.json "layout.asset_start" overrides it
@@ -123,8 +123,11 @@ def write_rom_layout(rom, rom_kb, header_cfg, code_end, code_limit, start, first
     finished ROM (padding is 0xFF), so it also covers level data and anything else placed in a bank."""
     from gel_codegen import DEFAULT_HEADER
     banks = []
-    for number in range(len(rom) // 0x8000):
-        data = rom[number * 0x8000:(number + 1) * 0x8000]
+    mode = header_cfg.get("rom_mode", "lorom").lower()
+    stride = 0x10000 if mode == "hirom" else 0x8000
+    for number in range(len(rom) // stride):
+        offset = number * stride + (0x8000 if mode == "hirom" else 0)
+        data = rom[offset:offset + 0x8000]
         banks.append({"bank": 0x80 + number, "used": len(data.rstrip(b"\xff"))})
     assets = {}
     try:
@@ -134,6 +137,7 @@ def write_rom_layout(rom, rom_kb, header_cfg, code_end, code_limit, start, first
         pass
     layout_info = {
         "rom_kb": rom_kb,
+        "rom_mode": mode, "fastrom": header_cfg.get("fastrom", True),
         "requested_kb": int({**DEFAULT_HEADER, **header_cfg}["rom_size_kb"]),
         "code_start": 0x8000, "code_end": code_end, "code_limit": code_limit,
         "asset_start": start, "asset_end": assets.get("end") if start is not None else None,
@@ -148,15 +152,22 @@ def write_rom_layout(rom, rom_kb, header_cfg, code_end, code_limit, start, first
 def finalize_rom(rom, header_cfg):
     """Pad to a power-of-two size (at least rom_size_kb), then fix the header size byte and checksum."""
     from gel_codegen import DEFAULT_HEADER, size_code
-    want_kb = int({**DEFAULT_HEADER, **header_cfg}["rom_size_kb"])
+    cfg = {**DEFAULT_HEADER, **header_cfg}
+    mode = cfg["rom_mode"].lower()
+    want_kb = int(cfg["rom_size_kb"])
+    if want_kb > 4096:
+        raise ValueError("LoROM and HiROM are limited to 4096 KB.")
     kb = 1
-    while kb * 1024 < max(len(rom), want_kb * 1024, 32 * 1024):
+    while kb * 1024 < max(len(rom), want_kb * 1024, (64 if mode == "hirom" else 32) * 1024):
         kb *= 2
+    if kb > 4096:
+        raise ValueError("ROM data exceeds the 4096 KB mapping limit.")
     rom = bytearray(rom.ljust(kb * 1024, b"\xff"))
-    rom[0x7FD7] = size_code(kb)
-    rom[0x7FDC:0x7FE0] = bytes([0xFF, 0xFF, 0x00, 0x00])
+    header = 0xFF00 if mode == "hirom" else 0x7F00
+    rom[header + 0xD7] = size_code(kb)
+    rom[header + 0xDC:header + 0xE0] = bytes([0xFF, 0xFF, 0x00, 0x00])
     checksum = sum(rom) & 0xFFFF
-    rom[0x7FDC:0x7FE0] = ((checksum ^ 0xFFFF) | (checksum << 16)).to_bytes(4, "little")
+    rom[header + 0xDC:header + 0xE0] = ((checksum ^ 0xFFFF) | (checksum << 16)).to_bytes(4, "little")
     return bytes(rom), kb
 
 
@@ -313,7 +324,7 @@ def parse_slot_aliases(asm_text, source):
     return found
 
 
-def write_hook(layout, source, asm_text=""):
+def write_hook(layout, source, asm_text="", rom_mode="lorom"):
     """Bake build paths, variable addresses, and collision dimensions into Mesen's hook."""
     with open(HOOK_TEMPLATE) as f:
         text = f.read()
@@ -334,6 +345,7 @@ def write_hook(layout, source, asm_text=""):
         "@GEL_VARS@": "{" + lua_vars + "}",
         "@LEVEL_WIDTH@": str(asset_defines.get("LEVEL_WIDTH", "nil")),
         "@LEVEL_HEIGHT@": str(asset_defines.get("LEVEL_HEIGHT", "nil")),
+        "@ROM_MODE@": rom_mode,
     }
     for name in ("player_x", "player_y", "cam_x", "cam_y"):
         entry = layout.get(name) or ram_vars.get(name)
@@ -373,7 +385,7 @@ def asset_input_files(assets_dir):
 ASSET_SCRIPTS = ("build.py", "build_cache.py", "png_to_snes_tiles.py", "level_pack.py", "metasprite_pack.py")
 
 
-def build_assets(cache, assets_dir, first_free_bank, start=CODE_LIMIT_WITH_ASSETS):
+def build_assets(cache, assets_dir, first_free_bank, start=CODE_LIMIT_WITH_ASSETS, bank_limit=0x100):
     """Cached wrapper around png_to_snes_tiles.py. It converts into a scratch folder and only
     copies the results into build/ on success, so a failed conversion leaves build/ untouched."""
     try:
@@ -382,7 +394,7 @@ def build_assets(cache, assets_dir, first_free_bank, start=CODE_LIMIT_WITH_ASSET
     except ImportError:
         pil = "?"
     files = asset_input_files(assets_dir) + [os.path.join(COMPILER_DIR, n) for n in ASSET_SCRIPTS]
-    key = make_key(PROJECT, files, f"bank={first_free_bank:#x};start={start:#x};pil={pil};py={sys.version_info[:2]}")
+    key = make_key(PROJECT, files, f"bank={first_free_bank:#x};limit={bank_limit:#x};start={start:#x};pil={pil};py={sys.version_info[:2]}")
     hit = cache.lookup("assets", key)
     if hit:
         print("  assets: unchanged, using cached conversion")
@@ -393,7 +405,7 @@ def build_assets(cache, assets_dir, first_free_bank, start=CODE_LIMIT_WITH_ASSET
     os.makedirs(scratch)
     try:
         subprocess.run([sys.executable, os.path.join(COMPILER_DIR, "png_to_snes_tiles.py"),
-                        assets_dir, scratch, hex(first_free_bank), hex(start)], check=True)
+                        assets_dir, scratch, hex(first_free_bank), hex(start), hex(bank_limit)], check=True)
         produced = sorted(n for n in os.listdir(scratch) if os.path.isfile(os.path.join(scratch, n)))
         for stale in set(old_outputs) - set(produced):
             try:
@@ -417,6 +429,12 @@ def build():
     print("          SNES-GEL Full ROM Build Pipeline")
     print("=" * 60)
 
+    header_cfg = load_config().get("header", {})
+    try:
+        validate_rom_mode(header_cfg)
+    except ValueError as error:
+        fail(f"{CONFIG_FILE}: {error}")
+
     game_file = os.path.join(PROJECT, "game.gel")
     assets_dir = os.path.join(PROJECT, "assets")
     if not os.path.isfile(game_file):
@@ -437,11 +455,14 @@ def build():
     if soundbank:
         size = os.path.getsize(soundbank)
         first_free_bank += (size + 0x7FFF) // 0x8000
+    bank_limit = 0xC0 if header_cfg.get("rom_mode", "lorom").lower() == "hirom" else 0x100
+    if first_free_bank > bank_limit:
+        fail("Soundbank exceeds the addressable ROM banks for this mapping.")
     start = asset_start()
     print("[1/4] Processing 'assets/' directory...")
     t0 = time.time()
     if os.path.isdir(assets_dir):
-        build_assets(cache, assets_dir, first_free_bank, start)
+        build_assets(cache, assets_dir, first_free_bank, start, bank_limit)
     else:
         print("  (no assets/ folder, skipping)")
     t_assets = time.time() - t0
@@ -479,7 +500,6 @@ def build():
     with open(game_file, "r") as f:
         gel_code = f.read()
 
-    header_cfg = load_config().get("header", {})
     try:
         asm_code, layout = compile_gel(gel_code, load_layout(), hot_reload=not RELEASE,
                                        base_dir=PROJECT, include_dirs=[BUILD], optimize=not NO_OPT,
@@ -514,7 +534,10 @@ def build():
     if code_end > code_limit:
         fail(f"Code ends at $80{code_end:04X}, past the ${code_limit:04X} limit "
              f"({code_end - code_limit} bytes too many).")
-    rom, rom_kb = finalize_rom(rom, header_cfg)
+    try:
+        rom, rom_kb = finalize_rom(rom, header_cfg)
+    except ValueError as error:
+        fail(str(error))
     write_rom_layout(rom, rom_kb, header_cfg, code_end, code_limit, start if has_assets else None,
                      first_free_bank, os.path.getsize(soundbank) if soundbank else 0)
     with open(os.path.join(BUILD, "game.sfc"), "wb") as f:
@@ -525,7 +548,7 @@ def build():
     with open(LAYOUT_FILE, "w") as f:
         json.dump(layout, f, indent=1)
     if not RELEASE:
-        write_hook(layout, gel_code, asm_code)
+        write_hook(layout, gel_code, asm_code, header_cfg.get("rom_mode", "lorom").lower())
 
     print(f"[4/4] Successfully assembled 'game.sfc' ({size} bytes).")
     print("=" * 60)

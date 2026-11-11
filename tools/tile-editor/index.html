@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GEL Level Editor</title>
+  <link rel="stylesheet" href="../contact-editor/editor.css">
+  <link rel="stylesheet" href="editor.css">
+  <link rel="stylesheet" href="../editor/navigation.css">
+  <script defer src="../visual-gel/history.js"></script>
+  <script defer src="editor.js"></script>
+</head>
+<body>
+<nav class="gel-navigation" aria-label="GEL editors">
+  <a href="/">Home</a><a href="/visual-gel/">Visual GEL</a><a href="/tile-editor/" aria-current="page">Level editor</a><a href="/object-editor/">Objects</a><a href="/contact-editor/">Contacts</a><a href="/metasprite-editor/">Metasprites</a><a href="/rom-overview/">ROM overview</a>
+</nav>
+<main>
+  <h1>Level editor</h1>
+  <p>Paint the first Tiled tile layer or collision layer, and edit existing objects. Saves update the original <code>level*.tmj</code>.</p>
+  <div class="toolbar">
+    <label>Map <select id="maps"></select></label>
+    <button id="reload" type="button">Reload</button>
+    <button id="save" type="button" disabled>Save map</button>
+    <button id="undo" type="button" disabled>Undo</button>
+    <button id="redo" type="button" disabled>Redo</button>
+    <span id="status" role="status" aria-live="polite"></span>
+  </div>
+  <p id="limits"></p>
+  <p id="warnings" role="status"></p>
+  <div class="workspace">
+    <aside>
+      <label>Editing layer <select id="layers"></select></label>
+      <fieldset><legend>Tool</legend>
+        <label><input type="radio" name="tool" value="paint" checked> Paint</label>
+        <label><input type="radio" name="tool" value="erase"> Erase</label>
+        <label><input type="radio" name="tool" value="select"> Rectangle select</label>
+        <label><input type="radio" name="tool" value="object"> Select/move object</label>
+      </fieldset>
+      <h2>Tileset</h2>
+      <p id="tile-info">Select a tile.</p>
+      <canvas id="palette" aria-label="Tileset; drag to select tiles for the stamp"></canvas>
+      <h2>Objects</h2>
+      <label>Object <select id="objects"></select></label>
+      <p id="object-info"></p>
+      <div id="object-fields" hidden>
+        <label>X <input id="object-x" type="number" min="0" max="65535" step="any"></label>
+        <label>Y <input id="object-y" type="number" min="0" max="65535" step="any"></label>
+        <label>Variant / param <input id="object-param" type="number" min="0" max="255" step="1"></label>
+      </div>
+      <p>Drag on the tileset to select a stamp, or use Rectangle select to copy tiles from the active map layer. Paint places the stamp, including empty cells.</p>
+      <p>Drag an object's hitbox to move it. Object positions use Tiled coordinates. Objects without hitbox dimensions use their Tiled size, or an 8×8 marker.</p>
+    </aside>
+    <section>
+      <div class="map-scroll">
+        <canvas id="map" aria-label="Level map"></canvas>
+      </div>
+    </section>
+  </div>
+</main>
+</body>
+</html>

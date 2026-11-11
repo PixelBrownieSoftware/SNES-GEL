@@ -2,6 +2,7 @@
 # gel_bridge.py - Multi-Format (.gel & .png) Hot-Reload Bridge
 # ==============================================================================
 import os
+import json
 import sys
 import time
 import subprocess
@@ -58,8 +59,10 @@ class GelHotReloadHandler(FileSystemEventHandler):
             res = subprocess.run([sys.executable, BUILD_SCRIPT, PROJECT], capture_output=False)
 
             if res.returncode == 0:
+                with open(os.path.join(BUILD_DIR, "rom-layout.json"), encoding="utf-8") as f:
+                    rom_mode = json.load(f)["rom_mode"]
                 with open(SIGNAL_FILE, "w") as f:
-                    f.write(f"{time.time()}\n{filename}\n")
+                    f.write(f"{time.time()}\n{filename}\n{rom_mode}\n")
                     f.flush()
                     os.fsync(f.fileno())
                 print(f"{get_time_str()} ✔ Build successful! Hot-reload signal sent to Mesen.")

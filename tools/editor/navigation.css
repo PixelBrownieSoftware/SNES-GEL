@@ -1,0 +1,33 @@
+.gel-navigation {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  box-sizing: border-box;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: .35rem;
+  max-width: 100vw;
+  overflow-x: auto;
+  margin: 0;
+  padding: .55rem 1rem;
+  background: #111822;
+  border-bottom: 1px solid #53617a;
+  font: 14px/1.4 system-ui, sans-serif;
+}
+.gel-navigation a {
+  display: inline-block;
+  flex: none;
+  padding: .35rem .65rem;
+  border-radius: .3rem;
+  color: #a9d8ff;
+  text-decoration: none;
+}
+.gel-navigation a:hover, .gel-navigation a:focus-visible {
+  background: #304158;
+  text-decoration: underline;
+}
+.gel-navigation a[aria-current="page"] {
+  color: #fff;
+  background: #37546c;
+}

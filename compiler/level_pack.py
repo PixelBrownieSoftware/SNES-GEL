@@ -41,17 +41,23 @@ LEVEL_COLOR_TO_TILE = {
 OBJECT_TYPES = {}
 OBJECT_SIZE = 6   # type, x lo, x hi, y lo, y hi, param
 
-# Each level gets a whole LoROM bank ($8000-$FFFF, 32 KB) to itself, so its map, collision
-# and objects can be any size that fits and bank 0 stays free for code and small assets.
-# The first free bank comes from the build (after the sound banks).
+# Legacy levels use one 32 KiB bank. Large levels store 32x32 chunks in
+# separate packed map and collision banks, with metadata in the first bank.
 LEVEL_BANK_SIZE = 0x8000
 MIN_LEVEL_HEIGHT = 32          # the VRAM tilemap is a 32-row ring buffer
+MAX_LEVEL_WIDTH = 4064         # aligned to 32 tiles, within signed pixel coordinates
+MAX_LEVEL_HEIGHT = 4095
+CHUNK_SIZE = 32
+MAP_CHUNKS_PER_BANK = 16
+COLL_CHUNKS_PER_BANK = 32
 _next_bank = [0x84]
+_bank_limit = [0x100]
 
 
-def reset(first_bank=0x84):
+def reset(first_bank=0x84, bank_limit=0x100):
     OBJECT_TYPES.clear()
     _next_bank[0] = first_bank
+    _bank_limit[0] = bank_limit
 
 
 def fail_level(label, message):
@@ -59,15 +65,41 @@ def fail_level(label, message):
     sys.exit(1)
 
 
+def legacy_max_height(width):
+    return (LEVEL_BANK_SIZE - 1 - 255 * OBJECT_SIZE -
+            SLOPE_TABLE_ENTRY_BYTES * MAX_SLOPE_PROFILES) // (width * 3)
+
+
+def banked_level(width, height):
+    return width > 64 or height > legacy_max_height(width)
+
+
+def level_bank_count(width, height):
+    if not banked_level(width, height):
+        return 1
+    chunks = (width // CHUNK_SIZE) * ((height + CHUNK_SIZE - 1) // CHUNK_SIZE)
+    return 1 + ((chunks + MAP_CHUNKS_PER_BANK - 1) // MAP_CHUNKS_PER_BANK +
+                (chunks + COLL_CHUNKS_PER_BANK - 1) // COLL_CHUNKS_PER_BANK)
+
+
+def level_size_error(width, height):
+    if (type(width) is not int or type(height) is not int or
+            width < 32 or width > MAX_LEVEL_WIDTH or width % 32 or
+            height < MIN_LEVEL_HEIGHT or height > MAX_LEVEL_HEIGHT):
+        return (f"width must be a multiple of 32 from 32 to {MAX_LEVEL_WIDTH}, and height must be "
+                f"from {MIN_LEVEL_HEIGHT} to {MAX_LEVEL_HEIGHT} tiles (got {width}x{height})")
+    return None
+
+
 def check_level_size(label, width, height):
-    if width not in (32, 64) or height < MIN_LEVEL_HEIGHT:
-        fail_level(label, f"must be 32 or 64 tiles wide and at least {MIN_LEVEL_HEIGHT} tiles high "
-                          f"(got {width}x{height})")
-    # map (2 bytes/tile) + collision (1 byte/tile) + a full object table must fit one bank
-    max_h = (LEVEL_BANK_SIZE - 1 - 255 * OBJECT_SIZE - SLOPE_TABLE_ENTRY_BYTES * MAX_SLOPE_PROFILES) // (width * 3)
-    if height > max_h:
-        fail_level(label, f"too tall for one ROM bank: at {width} tiles wide the limit is {max_h} tiles "
-                          f"(got {height})")
+    error = level_size_error(width, height)
+    if error:
+        fail_level(label, error)
+    needed = level_bank_count(width, height)
+    remaining = max(0, _bank_limit[0] - _next_bank[0])
+    if needed > remaining:
+        fail_level(label, f"no addressable ROM bank remains for this level "
+                          f"(needs {needed} banks, {remaining} available)")
 
 
 # ---------------- Legacy PNG levels ----------------
@@ -327,14 +359,17 @@ def emit_objects(objects, prefix, out_dir, gel_lines, asm_lines, bank, offset):
 
 def emit_level(ids, solid, asset_name, label, out_dir, gel_lines, asm_lines, rom_offset, flips=None,
                objects=(), slope_table=()):
-    """Write the VRAM tilemap, collision map, slope table and object table into the level's own
-    bank. `solid` is a grid of collision codes, or None to derive it from the tile ids (the PNG
+    """Write the VRAM tilemap, collision map, slope table and object table into level banks.
+    `solid` is a grid of collision codes, or None to derive it from the tile ids (the PNG
     workflow). `slope_table` is a list of (start, delta) eighth-pixel pairs indexed by slope codes.
     `flips` holds per-tile tilemap flip bits. rom_offset (bank 0) is returned unchanged."""
     prefix = asset_name.upper()
     height, width = len(ids), len(ids[0])
     bank = _next_bank[0]
-    _next_bank[0] += 1
+    check_level_size(label, width, height)
+    banked = banked_level(width, height)
+    bank_count = level_bank_count(width, height)
+    _next_bank[0] += bank_count
 
     # BG tilemap pages are 32 tiles wide; a 64-wide map is two pages stored one after the other,
     # each `height` rows of 64 bytes, so one row of a page is a single 64-byte DMA.
@@ -367,20 +402,61 @@ def emit_level(ids, solid, asset_name, label, out_dir, gel_lines, asm_lines, rom
 
     gel_lines.append(f"#define {prefix}_WIDTH {width}")
     gel_lines.append(f"#define {prefix}_HEIGHT {height}")
-    gel_lines.append(f"#define {prefix}_ROW_SHIFT {width.bit_length() - 1}")
+    gel_lines.append(f"#define {prefix}_ROW_SHIFT {width.bit_length() - 1 if width in (32, 64) else 0}")
     gel_lines.append(f"#define {prefix}_WIDTH_PX {width * 8}")
     gel_lines.append(f"#define {prefix}_HEIGHT_PX {height * 8}")
     gel_lines.append(f"#define {prefix}_MAX_CAM_X {width * 8 - 256}")
     gel_lines.append(f"#define {prefix}_MAX_CAM_Y {height * 8 - 224}")
-    gel_lines.append(f"#define {prefix}_SC_SIZE {1 if width == 64 else 0}")
+    gel_lines.append(f"#define {prefix}_SC_SIZE {1 if width >= 64 else 0}")
+    gel_lines.append(f"#define {prefix}_BANKED {int(banked)}")
     gel_lines.append(f"#define {prefix}_PAGES {width // 32}")
     gel_lines.append(f"#define {prefix}_MAX_TOP {height - 32}")   # highest first row of the VRAM window
-    gel_lines.append(f"#define {prefix}_PAGE_BYTES {height * 64}")
+    gel_lines.append(f"#define {prefix}_PAGE_BYTES {0 if banked else height * 64}")
     gel_lines.append(f"#define {prefix}_BANK 0x{bank:02X}")
 
     offset = 0x8000
-    for sym, path, data in ((f"{prefix}_MAP", map_file, tilemap), (f"{prefix}_COLL", coll_file, collision),
-                            (f"{prefix}_SLOPES", slope_file, slopes)):
+    if banked:
+        chunks = (width // 32) * ((height + 31) // 32)
+        map_banks = (chunks + MAP_CHUNKS_PER_BANK - 1) // MAP_CHUNKS_PER_BANK
+        chunk_map = bytearray()
+        chunk_coll = bytearray()
+        for chunk_y in range((height + 31) // 32):
+            for chunk_x in range(width // 32):
+                for row in range(32):
+                    y = chunk_y * 32 + row
+                    for col in range(32):
+                        x = chunk_x * 32 + col
+                        if y < height:
+                            tile = ids[y][x]
+                            flip = flips[y][x] if flips else 0
+                            chunk_map.extend(((tile & 0x3FF) | LEVEL_PALETTE_BITS | flip).to_bytes(2, "little"))
+                            chunk_coll.append(solid[y][x])
+                        else:
+                            chunk_map.extend(b"\0\0")
+                            chunk_coll.append(1)
+        chunk_map_file = os.path.join(out_dir, f"{asset_name}_map_chunks.bin")
+        chunk_coll_file = os.path.join(out_dir, f"{asset_name}_coll_chunks.bin")
+        with open(chunk_map_file, "wb") as f:
+            f.write(chunk_map)
+        with open(chunk_coll_file, "wb") as f:
+            f.write(chunk_coll)
+        gel_lines.append(f"#define {prefix}_MAP_BANK 0x{bank + 1:02X}")
+        gel_lines.append(f"#define {prefix}_COLL_BANK 0x{bank + 1 + map_banks:02X}")
+        gel_lines.append(f"#define {prefix}_MAP 0x8000")
+        gel_lines.append(f"#define {prefix}_COLL 0x8000")
+        for base, path, data in ((bank + 1, chunk_map_file, chunk_map),
+                                 (bank + 1 + map_banks, chunk_coll_file, chunk_coll)):
+            for start in range(0, len(data), LEVEL_BANK_SIZE):
+                end = min(start + LEVEL_BANK_SIZE, len(data))
+                asm_lines.append(f"org ${base + start // LEVEL_BANK_SIZE:02X}8000")
+                asm_lines.append(f'    incbin "{os.path.basename(path)}":${start:X}..${end:X}')
+        parts = ((f"{prefix}_SLOPES", slope_file, slopes),)
+    else:
+        gel_lines.append(f"#define {prefix}_MAP_BANK 0x{bank:02X}")
+        gel_lines.append(f"#define {prefix}_COLL_BANK 0x{bank:02X}")
+        parts = ((f"{prefix}_MAP", map_file, tilemap), (f"{prefix}_COLL", coll_file, collision),
+                 (f"{prefix}_SLOPES", slope_file, slopes))
+    for sym, path, data in parts:
         gel_lines.append(f"#define {sym} 0x{offset:04X}")
         asm_lines.append(f"org ${bank:02X}{offset:04X}")
         asm_lines.append(f"{sym}:")
@@ -389,7 +465,8 @@ def emit_level(ids, solid, asset_name, label, out_dir, gel_lines, asm_lines, rom
 
     offset = emit_objects(objects, prefix, out_dir, gel_lines, asm_lines, bank, offset)
 
-    print(f"OK level '{label}' -> {width}x{height} tiles in bank ${bank:02X}, "
+    detail = "metadata " if banked else ""
+    print(f"OK level '{label}' -> {width}x{height} tiles in {bank_count} bank(s) from ${bank:02X}, "
           f"{len(tilemap)}b map + {len(collision)}b collision, {len(objects)} objects "
-          f"({offset - 0x8000} of {LEVEL_BANK_SIZE} bytes)")
+          f"({detail}{offset - 0x8000} of {LEVEL_BANK_SIZE} bytes)")
     return rom_offset

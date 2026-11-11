@@ -39,14 +39,14 @@ def encode_4bpp_8x8(tile_pixels):
         tile_bytes[16 + row * 2 + 1] = b3
     return tile_bytes
 
-def process_asset_folder(folder_path, out_dir, first_level_bank=0x84, asset_start=0xC000):
+def process_asset_folder(folder_path, out_dir, first_level_bank=0x84, asset_start=0xC000, bank_limit=0x100):
     png_files = glob.glob(os.path.join(folder_path, "*.png"))
     if not png_files:
         print(f"WARNING: No PNG files found in '{folder_path}/'.")
         return
 
     gel_lines = ["// Auto-generated asset header\n"]
-    level_pack.reset(first_level_bank)
+    level_pack.reset(first_level_bank, bank_limit)
     asm_lines = ["; Auto-generated asset binary inclusions\n"]
 
     # Assets live high in bank $00 (DMA source bank is 0) so code can grow from $8000.
@@ -205,14 +205,15 @@ def process_asset_folder(folder_path, out_dir, first_level_bank=0x84, asset_star
     print(f"\nOK Successfully generated '{GEL_HEADER}' and '{ASM_HEADER}'.")
 
 if __name__ == "__main__":
-    # usage: png_to_snes_tiles.py <assets_folder> <output_folder> [first_level_bank] [asset_start]
+    # usage: png_to_snes_tiles.py <assets_folder> <output_folder> [first_level_bank] [asset_start] [bank_limit]
     folder = sys.argv[1] if len(sys.argv) > 1 else ASSETS_DIR
     out = sys.argv[2] if len(sys.argv) > 2 else folder
     first_bank = int(sys.argv[3], 0) if len(sys.argv) > 3 else 0x84
     start = int(sys.argv[4], 0) if len(sys.argv) > 4 else 0xC000
+    limit = int(sys.argv[5], 0) if len(sys.argv) > 5 else 0x100
     if not os.path.exists(folder):
         os.makedirs(folder)
         print(f"Created '{folder}' directory. Put your PNG files there!")
     else:
         os.makedirs(out, exist_ok=True)
-        process_asset_folder(folder, out, first_bank, start)
+        process_asset_folder(folder, out, first_bank, start, limit)

@@ -18,6 +18,8 @@
       <p class="hint">The ROM size is a <strong>minimum</strong>. The build always grows the ROM to the next power of two that fits the code, assets, sound and level data, so you can enlarge it but not shrink it below what the game needs.</p>
       <div class="rom-form">
         <label>ROM size <select id="rom-size"></select></label>
+        <label>ROM mode <select id="rom-mode"><option value="lorom">LoROM</option><option value="hirom">HiROM</option><option value="exlorom" disabled>ExLoROM (not supported)</option><option value="exhirom" disabled>ExHiROM (not supported)</option></select></label>
+        <label>ROM speed <select id="rom-speed"><option value="fast">FastROM</option><option value="slow">SlowROM</option></select></label>
         <label>Save RAM <select id="sram-size"></select></label>
         <label>Asset start <input id="asset-start" type="text" size="8" spellcheck="false"></label>
         <label>Title <input id="title" type="text" maxlength="21"></label>
@@ -27,6 +29,7 @@
         <button id="save" type="button">Save settings</button>
       </div>
       <p class="hint">Asset start is where graphics begin in the first bank. Code runs from $8000 up to it, so raising it gives the code more room, and lowering it gives graphics more room. It is a multiple of 256, written like $C000.</p>
+      <p class="hint">HiROM uses the upper 32 KiB of each 64 KiB bank for GEL data. ExLoROM and ExHiROM are not supported yet. FastROM requires a compatible cartridge.</p>
       <p class="hint">Saved changes take effect on the next build.</p>
     </section>
     <section>

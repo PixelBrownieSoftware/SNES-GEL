@@ -11,7 +11,7 @@ SRAM_KB = (0, 2, 4, 8, 16, 32, 64, 128)
 ASSET_START_RANGE = (0x9000, 0xF000)
 DEFAULT_ASSET_START = 0xC000
 HEADER_DEFAULTS = {"title": "GEL GAME TITLE", "rom_size_kb": 32, "sram_kb": 0,
-                   "region": 1, "developer": 0, "version": 0}
+                   "region": 1, "developer": 0, "version": 0, "rom_mode": "lorom", "fastrom": True}
 
 
 def read_config(project):
@@ -65,7 +65,8 @@ def describe(project):
     banks = [{**item, "role": bank_role(layout, item["bank"]), "size": BANK_SIZE}
              for item in layout["banks"]]
     used_banks = [b["bank"] for b in banks if b["used"]]
-    needed_bytes = ((max(used_banks) - 0x80 + 1) * BANK_SIZE) if used_banks else BANK_SIZE
+    stride = 0x10000 if layout.get("rom_mode") == "hirom" else BANK_SIZE
+    needed_bytes = ((max(used_banks) - 0x80 + 1) * stride) if used_banks else stride
     needed_kb = 32
     while needed_kb * 1024 < needed_bytes:
         needed_kb *= 2
@@ -84,6 +85,15 @@ def clean_settings(payload):
             if type(payload[key]) is not int or payload[key] not in allowed:
                 raise ValueError(f"{label} must be one of {', '.join(str(k) for k in allowed)} KB.")
             out[key] = payload[key]
+    if "rom_mode" in payload:
+        mode = payload["rom_mode"]
+        if not isinstance(mode, str) or mode.lower() not in ("lorom", "hirom"):
+            raise ValueError("ROM mapping must be LoROM or HiROM.")
+        out["rom_mode"] = mode.lower()
+    if "fastrom" in payload:
+        if type(payload["fastrom"]) is not bool:
+            raise ValueError("FastROM must be true or false.")
+        out["fastrom"] = payload["fastrom"]
     if "title" in payload:
         title = payload["title"]
         if not isinstance(title, str) or not title.strip() or len(title) > 21 or not title.isascii() \

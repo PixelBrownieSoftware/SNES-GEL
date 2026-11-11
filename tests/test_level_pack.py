@@ -56,6 +56,97 @@ def test_known_map_gives_expected_collision_and_map_bytes(tmp_path):
     assert "#define LEVEL_HEIGHT 32" in gel
 
 
+@pytest.mark.parametrize("bank_limit", [0xC0, 0x100])
+def test_bank_limit_rejects_mirrored_or_out_of_range_banks(tmp_path, bank_limit, capsys):
+    level_pack.reset(bank_limit - 1, bank_limit)
+    ids = [[0] * 32 for _ in range(32)]
+    gel, asm = [], []
+    level_pack.emit_level(ids, None, "level", "level", str(tmp_path), gel, asm, 0xC000)
+    assert f"#define LEVEL_BANK 0x{bank_limit - 1:02X}" in gel
+    with pytest.raises(SystemExit):
+        level_pack.emit_level(ids, None, "level2", "level2", str(tmp_path), gel, asm, 0xC000)
+    assert "no addressable ROM bank remains" in capsys.readouterr().out
+    level_pack.reset()
+
+
+def test_large_level_pages_and_collision_are_banked(tmp_path):
+    out, gel, asm = convert(tmp_path, width=256, height=256,
+                            tiles={(0, 0): 2, (31, 255): 2, (32, 0): 2, (255, 255): 2})
+    assert "#define LEVEL_BANKED 1" in gel
+    assert "#define LEVEL_BANK 0x84" in gel
+    assert "#define LEVEL_MAP_BANK 0x85" in gel
+    assert "#define LEVEL_COLL_BANK 0x89" in gel
+    assert "#define LEVEL_SLOPES 0x8000" in gel
+    assert len((out / "level_map.bin").read_bytes()) == 256 * 256 * 2
+    coll = (out / "level_coll_chunks.bin").read_bytes()
+    for x, y in ((0, 0), (31, 255), (32, 0), (255, 255)):
+        chunk = (y // 32) * 8 + x // 32
+        assert coll[chunk * 1024 + (y % 32) * 32 + x % 32] == 1
+        assert (out / "level_coll.bin").read_bytes()[y * 256 + x] == 1
+    assert sum(line.startswith("org $") for line in asm) >= 8
+    assert any(line == "org $8A8000" for line in asm)
+
+
+def test_large_level_metadata_and_bank_allocation(tmp_path):
+    out, gel, asm = convert(
+        tmp_path, width=256, height=256, tiles={(31, 5): 3, (32, 5): 3},
+        solid_ids=(), slope_profiles={2: (0, 8)},
+        objects=({"id": 1, "class": "Gem", "x": 1800, "y": 1200},))
+    assert "#define LEVEL_SLOPES 0x8000" in gel
+    assert "#define LEVEL_OBJECTS 0x8008" in gel
+    assert "#define LEVEL_OBJECT_COUNT 1" in gel
+    assert (out / "level_objects.bin").read_bytes() == bytes([1, 1, 8, 7, 176, 4, 0])
+    assert len((out / "level_slopes.bin").read_bytes()) == 8
+    collision = (out / "level_coll_chunks.bin").read_bytes()
+    assert collision[5 * 32 + 31] == 0x80
+    assert collision[1024 + 5 * 32] == 0x80
+    assert "org $848000" in asm
+    ids = [[0] * 32 for _ in range(32)]
+    next_gel = []
+    level_pack.emit_level(ids, None, "next", "next", str(out), next_gel, [], 0xC000)
+    assert "#define NEXT_BANK 0x8B" in next_gel
+
+
+@pytest.mark.parametrize(("width", "height", "expected"), [
+    (4064, 32, 13),
+    (32, 4095, 13),
+    (96, 65, 3),
+    (256, 256, 7),
+    (64, 157, 1),
+    (64, 158, 3),
+])
+def test_chunk_bank_budget(width, height, expected):
+    assert level_pack.level_size_error(width, height) is None
+    assert level_pack.level_bank_count(width, height) == expected
+
+
+@pytest.mark.parametrize(("width", "height"), [(31, 32), (33, 32), (4096, 32),
+                                               (32, 31), (32, 4096)])
+def test_dimension_limits(width, height):
+    assert level_pack.level_size_error(width, height)
+
+
+def test_large_level_rejects_bank_exhaustion_before_allocation(capsys):
+    level_pack.reset(0xBE, 0xC0)
+    with pytest.raises(SystemExit):
+        level_pack.check_level_size("level", 96, 65)
+    assert "no addressable ROM bank remains" in capsys.readouterr().out
+    assert level_pack._next_bank[0] == 0xBE
+    level_pack.reset()
+
+
+def test_partial_chunk_rows_are_padded(tmp_path):
+    out, gel, _ = convert(tmp_path, width=96, height=65, tiles={(95, 64): 2})
+    assert "#define LEVEL_BANKED 1" in gel
+    collision = (out / "level_coll_chunks.bin").read_bytes()
+    last_chunk = ((64 // 32) * 3 + 95 // 32) * 1024
+    assert collision[last_chunk + 31] == 1
+    assert collision[last_chunk + 32:last_chunk + 1024] == b"\x01" * (31 * 32)
+    tilemap = (out / "level_map_chunks.bin").read_bytes()
+    assert int.from_bytes(tilemap[last_chunk * 2 + 62:last_chunk * 2 + 64], "little") == 0x401
+    assert tilemap[last_chunk * 2 + 64:last_chunk * 2 + 2048] == bytes(31 * 64)
+
+
 def slope_surfaces(out, coll_byte):
     """Surface heights (pixels from the tile top, biased by 8) of a slope cell's 8 columns."""
     assert coll_byte & 0x80

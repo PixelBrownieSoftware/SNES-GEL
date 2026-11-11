@@ -3,6 +3,7 @@
 
 import argparse
 import importlib.util
+import io
 import json
 import sys
 import threading
@@ -29,6 +30,7 @@ visual_project = load_editor("visual-gel", "project.py")
 visual_memory = load_editor("visual-gel", "memory.py")
 visual_signature = load_editor("visual-gel", "signature.py")
 rom_overview = load_editor("rom-overview", "rom.py")
+tile_levels = load_editor("tile-editor", "levels.py")
 
 
 class EditorHandler(SimpleHTTPRequestHandler):
@@ -47,7 +49,37 @@ class EditorHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urlparse(self.path).path
-        if path == "/api/gel-files":
+        if path == "/api/tile-editor/maps":
+            self.send_json(200, {"maps": tile_levels.maps(self.assets_dir)})
+        elif path.startswith("/api/tile-editor/maps/"):
+            try:
+                name = unquote(path[len("/api/tile-editor/maps/"):])
+                self.send_json(200, tile_levels.load(self.assets_dir, self.server.project_dir, name))
+            except (ValueError, UnicodeDecodeError) as error:
+                self.send_json(400, {"error": str(error)})
+            except OSError as error:
+                self.send_json(500, {"error": str(error)})
+        elif path.startswith("/api/tile-editor/images/"):
+            try:
+                from PIL import Image
+                name = tile_levels.filename(unquote(path[len("/api/tile-editor/images/"):]), ".png")
+                with Image.open(self.assets_dir / name) as image:
+                    output = io.BytesIO()
+                    if image.mode == "P":
+                        image.save(output, format="PNG", transparency=0)
+                    else:
+                        image.save(output, format="PNG")
+                payload = output.getvalue()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            except ValueError as error:
+                self.send_json(400, {"error": str(error)})
+            except OSError as error:
+                self.send_json(500, {"error": str(error)})
+        elif path == "/api/gel-files":
             try:
                 files = sorted(p.name for p in self.server.project_dir.glob("*.gel") if p.is_file())
                 self.send_json(200, {"files": files})
@@ -90,7 +122,7 @@ class EditorHandler(SimpleHTTPRequestHandler):
                 path = self.path
             decoded = unquote(path)
             parts = decoded.split("/")
-            if (len(parts) < 3 or parts[1] not in ("editor", "object-editor", "contact-editor",             "metasprite-editor", "visual-gel", "rom-overview")                    or any(part in (".", "..") or "\\" in part for part in parts)
+            if (len(parts) < 3 or parts[1] not in ("editor", "object-editor", "contact-editor",             "metasprite-editor", "visual-gel", "rom-overview", "tile-editor")                    or any(part in (".", "..") or "\\" in part for part in parts)
                     or (parts[-1] and Path(parts[-1]).suffix not in (".html", ".js", ".css"))):
                 self.send_error(404)
                 return
@@ -105,7 +137,19 @@ class EditorHandler(SimpleHTTPRequestHandler):
                 self.send_error(403, "Invalid request origin")
                 return
         path = urlparse(self.path).path
-        if path == "/api/gel-files":
+        if path == "/api/tile-editor/maps":
+            try:
+                payload = json.loads(self.read_body(contacts.MAX_BODY_BYTES).decode("utf-8"))
+                with self.server.gel_lock:
+                    target, data = tile_levels.apply(self.assets_dir, self.server.project_dir, payload)
+                    contacts.atomic_write(target, data)
+                    result = tile_levels.load(self.assets_dir, self.server.project_dir, target.name)
+                self.send_json(200, result)
+            except (ValueError, UnicodeDecodeError) as error:
+                self.send_json(400, {"error": str(error)})
+            except OSError as error:
+                self.send_json(500, {"error": str(error)})
+        elif path == "/api/gel-files":
             try:
                 data = json.loads(self.read_body(contacts.MAX_BODY_BYTES).decode("utf-8"))
                 with self.server.gel_lock:

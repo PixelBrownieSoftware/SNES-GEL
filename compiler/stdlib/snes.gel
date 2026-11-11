@@ -463,7 +463,7 @@ static fn std_level_init(u16 tile_palette, u16 tiles, u16 tile_bytes, u16 map, u
 }
 
 // Like std_level_init, but the map is not uploaded: the game streams rows into the 32-row
-// VRAM ring at word $4000 (see level_stream in game.gel). Lets levels be any height.
+// VRAM ring at word $4000 (see level-stream.gel in the example game).
 static fn std_level_setup(u16 tile_palette, u16 tiles, u16 tile_bytes, u8 map_size) {
     std_load_palette(1, tile_palette, 16);
     std_load_vram(0x3000, tiles, tile_bytes);

@@ -54,6 +54,10 @@ when a fixed-point value is intended.
 Inline assembly: `asm { LDA #$00 }`. Read a register: `reg(A)`.
 The ROM boots into `init_game()`, which should set up hardware and then run the main loop.
 
+`peek8(address)` reads a byte from the current data bank, and
+`peek8l(bank, address)` reads a byte from a 24-bit address. The bank may be a
+constant or a runtime expression; the address is a 16-bit offset.
+
 ## Statements and operators
 
 ```

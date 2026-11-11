@@ -40,9 +40,21 @@ class RomOverviewTests(unittest.TestCase):
         path = self.project({})
         for payload in ({"rom_size_kb": 100}, {"rom_size_kb": True}, {"sram_kb": 3},
                         {"asset_start": 0xC001}, {"asset_start": 0x1000}, {"title": ""},
-                        {"title": "x" * 22}, {"region": 99}, {"version": -1}, []):
+                        {"title": "x" * 22}, {"region": 99}, {"version": -1},
+                        {"rom_mode": "exlorom"}, {"rom_mode": "exhirom"},
+                        {"rom_mode": None}, {"fastrom": 0}, {"fastrom": "true"}, []):
             with self.assertRaises(ValueError, msg=str(payload)):
                 rom.apply_settings(path, payload)
+
+    def test_explicit_lorom_is_accepted(self):
+        path = self.project({})
+        _, text = rom.apply_settings(path, {"rom_mode": "LoROM"})
+        self.assertEqual(json.loads(text)["header"]["rom_mode"], "lorom")
+
+    def test_hirom_and_slowrom_are_accepted(self):
+        path = self.project({})
+        _, text = rom.apply_settings(path, {"rom_mode": "HiROM", "fastrom": False})
+        self.assertEqual(json.loads(text)["header"], {"rom_mode": "hirom", "fastrom": False})
 
     def test_describe_without_build(self):
         result = rom.describe(self.project({}))
@@ -56,6 +68,13 @@ class RomOverviewTests(unittest.TestCase):
         result = rom.describe(self.project({}, layout))
         roles = [b["role"] for b in result["build"]["banks"]]
         self.assertEqual(roles, ["code", "spc", "soundbank", "soundbank", "data", "data"])
+        self.assertEqual(result["build"]["needed_kb"], 256)
+
+    def test_hirom_bank_stride(self):
+        layout = {"rom_kb": 256, "rom_mode": "hirom", "spc_bank": 0x81,
+                  "soundbank_bank": 0x82, "first_free_bank": 0x82,
+                  "banks": [{"bank": 0x80 + i, "used": 100} for i in range(3)]}
+        result = rom.describe(self.project({}, layout))
         self.assertEqual(result["build"]["needed_kb"], 256)
 
 

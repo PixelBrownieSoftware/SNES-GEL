@@ -2,6 +2,11 @@
 // how to use these records; this file does not create entities or upload tiles.
 // Each object record is six bytes: type, x (16-bit), y (16-bit), param.
 #define OBJ_ENTRY_SIZE 6
+#define TILE_COORD_MASK 7
+#define TILE_COORD_SHIFT 3
+#define COLLISION_SOLID 1
+#define SLOPE_INDEX_MASK 0x7F
+#define SLOPE_PROFILE_SHIFT 3
 
 fn obj_addr(u8 i) {
     return LEVEL_OBJECTS + 1 + (i << 2) + (i << 1);
@@ -36,10 +41,22 @@ fn obj_find(u8 type) {
     return 255;
 }
 
+// Chunk coordinates are in tiles; chunk indices are row-major.
+fn level_chunk_index(u16 x, u16 y) {
+    return (y >> 5) * LEVEL_PAGES + (x >> 5);
+}
+
 // Out-of-bounds coordinates are treated as solid, as in the original reader.
 fn collision_code_at(u16 wx, u16 wy) {
     if (wx >= LEVEL_WIDTH_PX) { return COLLISION_SOLID; }
     if (wy >= LEVEL_HEIGHT_PX) { return COLLISION_SOLID; }
+    if (LEVEL_BANKED) {
+        u16 x = wx >> TILE_COORD_SHIFT;
+        u16 y = wy >> TILE_COORD_SHIFT;
+        u16 chunk = level_chunk_index(x, y);
+        u8 bank = LEVEL_COLL_BANK + (chunk >> 5);
+        return peek8l(bank, LEVEL_COLL + ((chunk & 31) << 10) + ((y & 31) << 5) + (x & 31));
+    }
     return peek8l(LEVEL_BANK, LEVEL_COLL + (((wy >> TILE_COORD_SHIFT) << LEVEL_ROW_SHIFT) +
                                            (wx >> TILE_COORD_SHIFT)));
 }

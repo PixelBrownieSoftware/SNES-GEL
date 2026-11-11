@@ -1,6 +1,6 @@
 "use strict";
 
-const ROLE_NAMES = { code: "Code + assets", spc: "SPC program", soundbank: "Soundbank", data: "Level data" };
+const ROLE_NAMES = { code: "Code + assets", spc: "SPC program", soundbank: "Soundbank", data: "Level data", empty: "Empty" };
 const $ = (id) => document.getElementById(id);
 let state = null;
 
@@ -9,7 +9,12 @@ function hex(value, width = 4) {
 }
 
 function kb(bytes) {
-  return (bytes / 1024).toFixed(1) + " KB";
+  const kilobytes = bytes / 1024;
+  const megabytes = kilobytes / 1024;
+  if (megabytes >= 1) {
+    return `${megabytes.toFixed(2)} MB (${kilobytes.toFixed(1)} KB)`;
+  }
+  return `${kilobytes.toFixed(1)} KB`;
 }
 
 function setStatus(text, bad) {
@@ -18,12 +23,18 @@ function setStatus(text, bad) {
   status.className = bad ? "warn" : "ok";
 }
 
-function fillSelect(select, values, current) {
+function fillSelect(select, values, current, showMb = false) {
   select.textContent = "";
   for (const value of values) {
     const option = document.createElement("option");
     option.value = String(value);
-    option.textContent = value === 0 ? "None" : value + " KB";
+    if (value === 0) {
+      option.textContent = "None";
+    } else if (showMb) {
+      option.textContent = `${value} KB (${value / 1024} MB)`;
+    } else {
+      option.textContent = value + " KB";
+    }
     select.append(option);
   }
   select.value = String(current);
@@ -38,7 +49,13 @@ function line(parent, text, className) {
 
 function render() {
   const { header, build } = state;
-  fillSelect($("rom-size"), state.rom_sizes, header.rom_size_kb);
+  fillSelect($("rom-size"), state.rom_sizes, header.rom_size_kb, true);
+  const configuredMode = typeof header.rom_mode === "string" ? header.rom_mode.toLowerCase() : "";
+  $("rom-mode").value = configuredMode;
+  if (!["lorom", "hirom"].includes(configuredMode)) {
+    setStatus("The configured ROM mapping is not supported. Select LoROM or HiROM and save the settings.", true);
+  }
+  $("rom-speed").value = header.fastrom ? "fast" : "slow";
   fillSelect($("sram-size"), state.sram_sizes, header.sram_kb);
   $("asset-start").value = hex(state.asset_start);
   $("title").value = header.title;
@@ -55,11 +72,17 @@ function render() {
     return;
   }
   const codeFree = build.code_limit - build.code_end;
-  line(summary, `ROM: ${build.rom_kb} KB (settings ask for at least ${build.requested_kb} KB; the content needs ${build.needed_kb} KB).`);
+  const builtMode = build.rom_mode || "lorom";
+  const builtSpeed = build.fastrom === false ? "SlowROM" : "FastROM";
+  line(summary, `ROM: ${build.rom_kb} KB (${build.rom_kb / 1024} MB), ${builtMode === "hirom" ? "HiROM" : "LoROM"} ${builtSpeed} (settings ask for at least ${build.requested_kb} KB; the content needs ${build.needed_kb} KB).`);
   line(summary, `Code: ${hex(build.code_start)}-${hex(build.code_end)}, ${codeFree} bytes free before ${hex(build.code_limit)}.`,
     codeFree < 256 ? "warn" : "");
-  line(summary, `Assets: ${hex(build.asset_start)}-${hex(build.asset_end)}, ${build.asset_end - build.asset_start} bytes used.`);
-  line(summary, `Sound: ${(build.soundbank_bytes / 1024).toFixed(1)} KB soundbank. Total used: ${kb(build.used_bytes)}.`);
+  if (build.asset_start !== null && build.asset_end !== null) {
+    line(summary, `Assets: ${hex(build.asset_start)}-${hex(build.asset_end)}, ${build.asset_end - build.asset_start} bytes used.`);
+  } else {
+    line(summary, "Assets: none.");
+  }
+  line(summary, `Sound: ${kb(build.soundbank_bytes)}. Total used: ${kb(build.used_bytes)}.`);
 
   for (const bank of build.banks) {
     const row = document.createElement("div");
@@ -99,6 +122,8 @@ async function save() {
   const assetStart = Number(text);
   const body = {
     rom_size_kb: Number($("rom-size").value),
+    rom_mode: $("rom-mode").value,
+    fastrom: $("rom-speed").value === "fast",
     sram_kb: Number($("sram-size").value),
     asset_start: assetStart,
     title: $("title").value,
