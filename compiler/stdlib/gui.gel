@@ -1,0 +1,111 @@
+// Controller-driven GUI helpers. Include after snes.gel.
+// Call after std_input_update(); selection movement uses newly pressed buttons.
+
+static fn std_gui_move_selection(
+    u8 selected,
+    u8 item_count,
+    u16 previous_button,
+    u16 next_button,
+    u8 wrap
+) -> u8 {
+    if (item_count == 0) { return 0; }
+    if (selected >= item_count) { selected = 0; }
+
+    if (pad1_pressed & previous_button) {
+        if (selected > 0) {
+            selected -= 1;
+        } else if (wrap) {
+            selected = item_count - 1;
+        }
+    } else if (pad1_pressed & next_button) {
+        if (selected < item_count - 1) {
+            selected += 1;
+        } else if (wrap) {
+            selected = 0;
+        }
+    }
+
+    return selected;
+}
+
+static fn std_gui_list_scroll_start(u8 selected, u8 first_visible, u8 visible_count) -> u8 {
+    if (visible_count == 0) { return first_visible; }
+
+    if (selected < first_visible) {
+        first_visible = selected;
+    } else if (selected - first_visible >= visible_count) {
+        first_visible = selected - visible_count + 1;
+    }
+
+    return first_visible;
+}
+
+static fn std_gui_move_grid_selection(
+    u8 selected,
+    u8 item_count,
+    u8 columns,
+    u16 up_button,
+    u16 down_button,
+    u16 left_button,
+    u16 right_button,
+    u8 wrap
+) -> u8 {
+    if (item_count == 0 || columns == 0) { return 0; }
+    if (selected >= item_count) { selected = 0; }
+
+    u8 last_item = item_count - 1;
+    u8 row_start = 0;
+    u8 column = 0;
+    u8 last_column = 0;
+
+    if (pad1_pressed & up_button) {
+        if (selected >= columns) {
+            selected -= columns;
+        } else if (wrap) {
+            column = selected;
+            while (column >= columns) { column -= columns; }
+            last_column = last_item;
+            while (last_column >= columns) { last_column -= columns; }
+            row_start = last_item - last_column;
+            selected = row_start + column;
+            if (selected > last_item) { selected = last_item; }
+        }
+    } else if (pad1_pressed & down_button) {
+        if (selected + columns < item_count) {
+            selected += columns;
+        } else if (wrap) {
+            column = selected;
+            while (column >= columns) { column -= columns; }
+            selected = column;
+        }
+    } else if (pad1_pressed & left_button) {
+        column = selected;
+        while (column >= columns) { column -= columns; }
+        row_start = selected - column;
+        if (selected > row_start) {
+            selected -= 1;
+        } else if (wrap) {
+            selected = row_start + columns - 1;
+            if (selected > last_item) { selected = last_item; }
+        }
+    } else if (pad1_pressed & right_button) {
+        column = selected;
+        while (column >= columns) { column -= columns; }
+        row_start = selected - column;
+        if (column + 1 < columns && selected + 1 < item_count) {
+            selected += 1;
+        } else if (wrap) {
+            selected = row_start;
+        }
+    }
+
+    return selected;
+}
+
+static fn std_gui_button_pressed(u16 button_mask) -> u8 {
+    return (pad1_pressed & button_mask) != 0;
+}
+
+static fn std_gui_button_held(u16 button_mask) -> u8 {
+    return (pad1_held & button_mask) != 0;
+}

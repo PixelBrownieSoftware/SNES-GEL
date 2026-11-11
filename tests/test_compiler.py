@@ -13,6 +13,30 @@ def test_minimal_program_compiles():
     assert "JSR init_game" in asm
 
 
+@pytest.mark.parametrize("optimize", [False, True])
+def test_gui_stdlib_compiles_with_snes_input_helpers(optimize):
+    asm, _ = compile_src(
+        '#include "snes.gel"\n'
+        '#include "gui.gel"\n'
+        'u8 selection;\n'
+        'u8 first_visible;\n'
+        'fn init_game() {\n'
+        '    std_input_update();\n'
+        '    selection = std_gui_move_selection(selection, 4, BTN_UP, BTN_DOWN, 1);\n'
+        '    selection = std_gui_move_grid_selection(selection, 6, 3, BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT, 1);\n'
+        '    first_visible = std_gui_list_scroll_start(selection, first_visible, 3);\n'
+        '    if (std_gui_button_pressed(BTN_A) || std_gui_button_held(BTN_B)) { selection = 0; }\n'
+        '}\n',
+        optimize=optimize)
+    assert "init_game:" in asm
+    if not optimize:
+        assert "std_gui_move_selection:" in asm
+        assert "std_gui_move_grid_selection:" in asm
+        assert "std_gui_list_scroll_start:" in asm
+        assert "std_gui_button_pressed:" in asm
+        assert "std_gui_button_held:" in asm
+
+
 @pytest.mark.parametrize("mode", ["exlorom", "exhirom", None, 1])
 def test_unsupported_rom_mappings_are_rejected(mode):
     with pytest.raises(ValueError, match="supported mappings"):

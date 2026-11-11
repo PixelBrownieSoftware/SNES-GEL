@@ -110,6 +110,23 @@ Entities.for_each(e) { Entities[e].x += 1; }    // iterate live slots
   (`pad1_held`, `pad1_pressed`), OAM and sprites (`std_draw_sprite`, `std_draw_metasprite`,
   `std_draw_frame`), animation (`std_anim_*`), VRAM and palette loading, text (`std_print`,
   `std_print_dec`, `std_print_hex`), scrolling and level helpers, `abs16`.
+- `gui.gel`: `std_gui_move_selection(selected, count, previous_button, next_button, wrap)`,
+  `std_gui_move_grid_selection(selected, count, columns, up, down, left, right, wrap)`,
+  `std_gui_list_scroll_start(selected, first_visible, visible_count)`,
+  `std_gui_button_pressed(button_mask)` and `std_gui_button_held(button_mask)`. Include it
+  after `snes.gel`; it provides input and list/grid state helpers, not a renderer, so projects
+  can draw menus in their own style. Grid movement preserves the column when moving vertically
+  and clamps to the last item in a shorter final row. Horizontal movement stays within a row;
+  `wrap` wraps at the grid edges. `std_gui_list_scroll_start` returns the first item index that
+  keeps the selection within the visible range. Update input before using these helpers:
+
+  ```
+  std_input_update();
+  selection = std_gui_move_selection(selection, item_count, BTN_UP, BTN_DOWN, 1);
+  first_visible = std_gui_list_scroll_start(selection, first_visible, visible_rows);
+  if (std_gui_button_pressed(BTN_A)) { confirm_selection(); }
+  ```
+
 - `sound.gel`: SNESMod wrappers: `std_sfx_load`, `std_sfx_play`, `std_music_load`,
   `std_music_play`, `std_music_stop`, `std_music_volume`, `std_music_fade`.
 
